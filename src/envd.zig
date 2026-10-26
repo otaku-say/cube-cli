@@ -17,6 +17,9 @@ pub const Result = struct {
     pid: i32 = 0,
     /// 输出/响应超缓冲上限被截断（调用方必须提示并非 0 退出，不能当完整结果用）。
     truncated: bool = false,
+    /// envd 回 deadline_exceeded 且没收到 exitCode（进程未结束就被取消）：
+    /// exit_code 已被置为 124，调用方应提示「超时」而不是静默当成功。
+    deadline_exceeded: bool = false,
 };
 
 /// JSON 字符串转义（不依赖 std.json 的 Stringify，行为可控）。
@@ -161,16 +164,26 @@ pub fn exec(
     var pid: i32 = 0;
     // 响应流本身被截断 → 流不完整，解析出来的结果不可信
     var truncated: bool = res.truncated;
+    var saw_exit = false;
+    var deadline = false;
 
     var stream = connect.Stream{ .buf = res.body };
     while (try stream.next()) |env| {
-        if (env.flag & connect.end_stream_flag != 0) continue;
+        if (env.flag & connect.end_stream_flag != 0) {
+            // end-stream 里可能是 `{"error":{"code":"deadline_exceeded"...}}`：
+            // 缺了它，超时的命令会以 exit 0 静默「成功」（进程其实被取消了）。
+            if (std.mem.indexOf(u8, env.payload, "deadline_exceeded") != null) deadline = true;
+            continue;
+        }
         // 用最简解析：直接找字段
         if (std.mem.indexOf(u8, env.payload, "\"pid\"")) |_| {
             if (extractInt(env.payload, "pid")) |v| pid = v;
         }
         if (std.mem.indexOf(u8, env.payload, "\"exitCode\"")) |_| {
-            if (extractInt(env.payload, "exitCode")) |v| exit_code = v;
+            if (extractInt(env.payload, "exitCode")) |v| {
+                exit_code = v;
+                saw_exit = true;
+            }
         }
         if (std.mem.indexOf(u8, env.payload, "\"stdout\"")) |_| {
             if (extractString(arena, env.payload, "stdout")) |v| {
@@ -184,12 +197,18 @@ pub fn exec(
         }
     }
 
+    // 进程正常退出时 exitCode 先到，deadline 只是读流收尾（不覆盖真退出码）；
+    // 没收到 exitCode 就超时 = 命令没跑完，按 timeout(1) 的 124 报失败。
+    const cancelled = deadline and !saw_exit;
+    if (cancelled) exit_code = 124;
+
     return .{
         .stdout = out_buf[0..out_len],
         .stderr = err_buf[0..err_len],
         .exit_code = exit_code,
         .pid = pid,
         .truncated = truncated,
+        .deadline_exceeded = cancelled,
     };
 }
 
@@ -529,7 +548,9 @@ pub fn streamPost(
     hs[n] = .{ .name = "Connect-Content-Encoding", .value = "identity" };
     n += 1;
     if (timeout_s > 0) {
-        hs[n] = .{ .name = "Connect-Timeout-Ms", .value = try std.fmt.allocPrint(arena, "{d}", .{timeout_s * 1000}) };
+        // 秒 → 毫秒前先夹上限（裸乘在大数上会溢出 panic，同 sdk_exec.zig）
+        const capped_s: u64 = @min(timeout_s, 86_400);
+        hs[n] = .{ .name = "Connect-Timeout-Ms", .value = try std.fmt.allocPrint(arena, "{d}", .{capped_s * 1000}) };
         n += 1;
     }
     if (token) |t| {

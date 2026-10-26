@@ -57,13 +57,14 @@ fn cmdCat(c: *Ctx, a: util.Args) !void {
     const sid = a.at(0) orelse return error.MissingArg;
     const path = a.at(1) orelse return error.MissingArg;
     var s = sdkmod.Sdk.fromCtx(c);
-    const content = sdk_files.fileRead(&s, sid, path, a.get("user")) catch |e| {
+    const r = sdk_files.fileRead(&s, sid, path, a.get("user")) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };
-    try c.out.print("{s}", .{content});
-    // 内容顶满读缓冲 = 服务端响应被截断（无标记、无报错就输出半截文件是历史缺陷）
-    if (content.len >= sdkmod.BUF) {
+    try c.out.print("{s}", .{r.data});
+    // 是否截断由响应头/长度判定（truncated）；不能看“内容填满缓冲”猜——
+    // 文件恰好等于缓冲上限时是完整的。
+    if (r.truncated) {
         try c.out.flush();
         std.debug.print("⚠ 响应超上限已截断：文件内容不完整（上限 {d} B）\n", .{sdkmod.BUF});
         std.process.exit(1);

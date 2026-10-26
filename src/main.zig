@@ -220,7 +220,11 @@ fn cmdCode(c: *Ctx, args: []const []const u8) !void {
     const envs_json = try util.envsJson(c.arena, a.flags);
     var timeout_ms: u64 = 0;
     if (a.get("timeout")) |t| {
-        if (std.fmt.parseInt(u64, t, 10)) |n| timeout_ms = n * 1000 else |_| {
+        if (std.fmt.parseInt(u64, t, 10)) |n| {
+            // 秒 → 毫秒前先夹上限（裸乘在大数上会溢出 panic，同 sdk_exec.zig）
+            const capped_s: u64 = @min(n, 86_400);
+            timeout_ms = capped_s * 1000;
+        } else |_| {
             try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=600\n", .{t});
             return error.BadArg;
         }
@@ -263,6 +267,7 @@ fn runInSandbox(c: *Ctx, sid: []const u8, command: []const u8, cwd: ?[]const u8,
     if (res.truncated or res.exit_code != 0) {
         try c.out.flush();
         if (res.truncated) std.debug.print("⚠ 响应超上限已截断：输出不完整\n", .{});
+        if (res.deadline_exceeded) std.debug.print("⚠ --timeout 到点命令未结束（deadline_exceeded），按 exit 124 返回\n", .{});
         if (res.exit_code != 0) std.debug.print("（exit {d}）\n", .{res.exit_code});
         std.process.exit(if (res.exit_code != 0) @intCast(@min(@max(res.exit_code, 0), 255)) else 1);
     }
@@ -318,7 +323,10 @@ fn cmdExec(c: *Ctx, args: []const []const u8) !void {
     // 显式 --timeout=秒 才作为 envd 侧硬截止。
     var timeout_ms: u64 = 0;
     if (a.get("timeout")) |t| {
-        if (std.fmt.parseInt(u64, t, 10)) |n| timeout_ms = n * 1000 else |_| {
+        if (std.fmt.parseInt(u64, t, 10)) |n| {
+            const capped_s: u64 = @min(n, 86_400);
+            timeout_ms = capped_s * 1000;
+        } else |_| {
             try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=600\n", .{t});
             return error.BadArg;
         }
@@ -331,6 +339,7 @@ fn cmdExec(c: *Ctx, args: []const []const u8) !void {
     if (res.truncated or res.exit_code != 0) {
         try c.out.flush();
         if (res.truncated) std.debug.print("⚠ 响应超上限已截断：输出不完整\n", .{});
+        if (res.deadline_exceeded) std.debug.print("⚠ --timeout 到点命令未结束（deadline_exceeded），按 exit 124 返回\n", .{});
         if (res.exit_code != 0) std.debug.print("（exit {d}）\n", .{res.exit_code});
         std.process.exit(if (res.exit_code != 0) @intCast(@min(@max(res.exit_code, 0), 255)) else 1);
     }

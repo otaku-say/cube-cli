@@ -14,11 +14,15 @@ fn tFileRead(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const sid = a.str(srv.arena, "sandbox_id") catch return srv.argError(a);
     const path = a.str(srv.arena, "path") catch return srv.argError(a);
     const user = try a.strOpt(srv.arena, "user");
-    const content = sdk_files.fileRead(srv.sdk, sid, path, user) catch |e| return switch (e) {
+    const r = sdk_files.fileRead(srv.sdk, sid, path, user) catch |e| return switch (e) {
         error.MissingConfig, error.HttpError => srv.sdkError(),
         else => ToolResult.err(@errorName(e)),
     };
-    return ToolResult.ok(types.clampText(srv.arena, content));
+    // 内容超过读缓冲上限时只能给前半截：必须在结果里明说，不能当完整文件默认
+    var w: std.Io.Writer.Allocating = .init(srv.arena);
+    if (r.truncated) try w.writer.writeAll("⚠ 响应超上限已截断：文件内容不完整（请分段读取）\n");
+    try w.writer.writeAll(r.data);
+    return ToolResult.ok(types.clampText(srv.arena, w.written()));
 }
 
 fn tFileWrite(srv: *Server, a: *argmod.Args) anyerror!ToolResult {

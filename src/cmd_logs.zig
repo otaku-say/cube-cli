@@ -127,7 +127,12 @@ pub fn run(c: *Ctx, argv: []const []const u8) !void {
 
     // v2（含 --follow）
     var deadline_s: u64 = 0; // 0 = 不限
-    if (a.get("timeout")) |t| deadline_s = std.fmt.parseInt(u64, t, 10) catch 0;
+    if (a.get("timeout")) |t| {
+        deadline_s = std.fmt.parseInt(u64, t, 10) catch {
+            try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=60\n", .{t});
+            return error.BadArg;
+        };
+    }
     const buf = try c.arena.alloc(u8, BUF);
     var waited: u64 = 0;
     while (true) {

@@ -82,7 +82,12 @@ pub fn sandboxExec(self: *Sdk, sid: []const u8, cmd: []const u8, opt: ExecOption
     );
     return .{
         .stdout = res.stdout,
-        .stderr = res.stderr,
+        // 超时时 envd 回 deadline_exceeded（无 exitCode）：把「为什么 exit 124」写进 stderr，
+        // 否则 MCP 侧只看到一个 124 数字。
+        .stderr = if (res.deadline_exceeded)
+            try std.fmt.allocPrint(self.arena, "{s}⚠ 命令在 timeout 到点前未结束（deadline_exceeded），按退出码 124 处理\n", .{res.stderr})
+        else
+            res.stderr,
         .exit_code = res.exit_code,
     };
 }

@@ -100,7 +100,8 @@ pub const table = [_]Entry{
         \\       --env=       K=V 直接给值；只给 NAME 则从**本机环境**读同名变量注入
         \\                    （敏感值不必出现在命令行 / 进程列表里）。
         \\       --timeout=   秒；缺省不设截止（同 SDK run(timeout=None)）。给值则作为
-        \\                    envd 硬截止（Connect-Timeout-Ms），到点进程被取消。
+        \\                    envd 硬截止（Connect-Timeout-Ms），到点进程被取消，
+        \\                    退出码为 124（同 timeout(1)）。
         \\       --user=      以指定用户身份执行（envd Basic 作用域；默认 root）。
         \\示例:  cube-cli exec $SID 'zig version'
         \\       cube-cli exec $SID -- python3 --version
@@ -126,6 +127,7 @@ pub const table = [_]Entry{
         \\                  并对外暴露 49999；缺失时报 HTTP 502，不是 CLI 缺陷）。
         \\       --lang=      python（默认）/ js（js、javascript、node、nodejs）/ bash（sh、shell）。
         \\       --timeout=   秒；缺省不设截止（同 SDK run_code(timeout=None)）。
+        \\                   到点未结束时退出码为 124（同 timeout(1)）。
         \\                   kernel 模式不支持 --timeout（该通道的读超时由服务端控制，传了也不生效）。
         \\       --env= / --user=  同 exec。
         \\示例:  cube-cli code $SID 'print(sum(range(10)))'

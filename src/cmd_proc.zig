@@ -226,9 +226,21 @@ fn cmdExecLogs(c: *Ctx, a: util.Args) !void {
     };
 
     const mode = a.get("mode") orelse "both";
-    var off_out: u64 = if (a.get("offset")) |o| (std.fmt.parseInt(u64, o, 10) catch 0) else 0;
+    var off_out: u64 = 0;
+    if (a.get("offset")) |o| {
+        off_out = std.fmt.parseInt(u64, o, 10) catch {
+            try c.out.print("错误：--offset= 需要非负整数（收到 {s}）；请用等号写法 --offset=0\n", .{o});
+            return error.BadArg;
+        };
+    }
     var off_err: u64 = off_out;
-    const limit: u64 = if (a.get("limit")) |l| (std.fmt.parseInt(u64, l, 10) catch 0) else 0;
+    var limit: u64 = 0;
+    if (a.get("limit")) |l| {
+        limit = std.fmt.parseInt(u64, l, 10) catch {
+            try c.out.print("错误：--limit= 需要非负整数（收到 {s}）；请用等号写法 --limit=65536\n", .{l});
+            return error.BadArg;
+        };
+    }
     const follow = a.has("follow");
 
     var last_exit: ?i64 = null;

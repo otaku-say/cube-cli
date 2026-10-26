@@ -45,7 +45,12 @@ fn cmdPause(c: *Ctx, a: util.Args) !void {
     };
     if (a.has("wait")) {
         var limit_s: u64 = 30;
-        if (a.get("timeout")) |t| limit_s = std.fmt.parseInt(u64, t, 10) catch 30;
+        if (a.get("timeout")) |t| {
+            limit_s = std.fmt.parseInt(u64, t, 10) catch {
+                try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=60\n", .{t});
+                return error.BadArg;
+            };
+        }
         try waitState(c, sid, "paused", limit_s);
     } else {
         try c.out.print("paused {s}\n", .{sid});
@@ -57,7 +62,10 @@ fn cmdResume(c: *Ctx, a: util.Args) !void {
     const sid = try sidOf(a);
     var timeout_val: ?u64 = null;
     if (a.get("timeout")) |t| {
-        timeout_val = std.fmt.parseInt(u64, t, 10) catch null;
+        timeout_val = std.fmt.parseInt(u64, t, 10) catch {
+            try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=1800\n", .{t});
+            return error.BadArg;
+        };
     }
     var s = sdkmod.Sdk.fromCtx(c);
     sdk_lifecycle.sandboxResume(&s, try jsonfmt.qenc(c.arena, sid, false), timeout_val) catch |e| {
@@ -142,6 +150,12 @@ fn cmdSnapLs(c: *Ctx, a: util.Args) !void {
         const path = try snapLsPath(c, a, page_limit, token);
         const buf = try c.arena.alloc(u8, BUF);
         const res = try c.control(.GET, path, null, buf);
+        if (res.truncated) {
+            // 埋在缓冲上限时 body 是半截 JSON：必须报「截断」，不能报成解析失败
+            try c.out.flush();
+            std.debug.print("⚠ 响应超上限已截断：本页快照 JSON 不完整（超过 {d} B 读缓冲），请用 --limit= 分页\n", .{buf.len});
+            return error.OutputTooLarge;
+        }
         last = res;
         pages += 1;
         const items = try snapItems(c, res.body);
@@ -299,7 +313,12 @@ fn cmdRollback(c: *Ctx, a: util.Args) !void {
     }
     if (a.has("wait")) {
         var limit_s: u64 = 60;
-        if (a.get("timeout")) |t| limit_s = std.fmt.parseInt(u64, t, 10) catch 60;
+        if (a.get("timeout")) |t| {
+            limit_s = std.fmt.parseInt(u64, t, 10) catch {
+                try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=60\n", .{t});
+                return error.BadArg;
+            };
+        }
         waitStateQuiet(c, sid, "running", limit_s, a.has("json")) catch |e| return e;
     }
 }

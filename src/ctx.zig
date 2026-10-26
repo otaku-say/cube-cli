@@ -44,7 +44,9 @@ pub const Ctx = struct {
     pub fn control(self: *Ctx, method: httpc.Method, path: []const u8, payload: ?[]const u8, buf: []u8) !httpc.Response {
         const res = try self.controlRaw(method, path, payload, &.{}, buf);
         if (!res.ok()) {
-            try self.out.print("HTTP {d}: {s}\n", .{ res.status, res.body });
+            // 错误一律走 stderr（与 envd / sdk.printErr 对齐）：stdout 只留正常输出，
+            // 否则 `OUT=$(cube ls)` 会拿到 "HTTP 500: ..." 当成数据。
+            std.debug.print("HTTP {d}: {s}\n", .{ res.status, res.body });
             return error.HttpError;
         }
         return res;
@@ -63,7 +65,7 @@ pub const Ctx = struct {
         buf: []u8,
     ) !httpc.Response {
         if (self.api.len == 0) {
-            try self.out.print("错误：缺少环境变量 CUBESANDBOX_API_URL\n", .{});
+            std.debug.print("错误：缺少环境变量 CUBESANDBOX_API_URL\n", .{});
             return error.MissingConfig;
         }
         const url = try std.fmt.allocPrint(self.arena, "{s}{s}", .{ trimSlash(self.api), path });
@@ -126,17 +128,19 @@ pub const Ctx = struct {
     }
 
     /// 沙箱内 envd（执行代理）基址：走数据面路径风格路由。
+    /// sid 来自命令行/控制面，必须百分号转义后再拼路径（
+    /// 如 `exec 'abc?x=1' ...` 不能变成 `/sandbox/abc?x=1/49983`）。
     pub fn envdBase(self: *Ctx, sid: []const u8) ![]const u8 {
         const proxy = cfg.proxyURL() orelse {
-            try self.out.print("错误：缺少环境变量 CUBESANDBOX_PROXY_URL\n", .{});
+            std.debug.print("错误：缺少环境变量 CUBESANDBOX_PROXY_URL\n", .{});
             return error.MissingConfig;
         };
-        return std.fmt.allocPrint(self.arena, "{s}/sandbox/{s}/49983", .{ trimSlash(proxy), sid });
+        return std.fmt.allocPrint(self.arena, "{s}/sandbox/{s}/49983", .{ trimSlash(proxy), try envd.urlEncode(self.arena, sid) });
     }
 
     /// connect 沙箱，拿 envdAccessToken（可空）。
     pub fn connectToken(self: *Ctx, sid: []const u8, buf: []u8) !?[]const u8 {
-        const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/connect", .{sid});
+        const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/connect", .{try envd.urlEncode(self.arena, sid)});
         const res = try self.control(.POST, path, "{}", buf);
         return envd.extractString(self.arena, res.body, "envdAccessToken");
     }

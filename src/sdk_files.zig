@@ -11,8 +11,14 @@ fn jsonPath(arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     return std.fmt.allocPrint(arena, "{{\"path\":\"{s}\"}}", .{try envd.jsonEscape(arena, path)});
 }
 
+/// 读文件结果：data 可能是不完整的（响应超过读缓冲上限，truncated=true）。
+pub const ReadResult = struct {
+    data: []const u8 = "",
+    truncated: bool = false,
+};
+
 /// 读文件内容（GET /files?path=...）。
-pub fn fileRead(self: *Sdk, sid: []const u8, path: []const u8, user: ?[]const u8) ![]const u8 {
+pub fn fileRead(self: *Sdk, sid: []const u8, path: []const u8, user: ?[]const u8) !ReadResult {
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const dp = try self.dataPlane(sid, buf);
     const res = try envd.readFile(self.arena, self.client, dp.base, dp.token, user, path, buf);
@@ -21,7 +27,9 @@ pub fn fileRead(self: *Sdk, sid: []const u8, path: []const u8, user: ?[]const u8
         self.last_body = try self.arena.dupe(u8, res.body);
         return error.HttpError;
     }
-    return self.arena.dupe(u8, res.body);
+    // 用响应里的真实截断标记（读满缓冲且服务端声明更长/未知），不能看长度猜：
+    // 文件长度恰好等于缓冲上限时是完整内容。
+    return .{ .data = try self.arena.dupe(u8, res.body), .truncated = res.truncated };
 }
 
 /// 写文件内容（POST /files?path=...，原始 octet-stream）。

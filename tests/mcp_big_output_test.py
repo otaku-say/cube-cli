@@ -81,6 +81,17 @@ def main():
             ok("无替换字符（未产生半个字符）")
         else:
             bad("文本含 U+FFFD 替换字符，说明截断劈开了字符")
+
+        # 3) 文件本身超过 SDK 读缓冲（8 MiB）时，必须明说内容不完整
+        srv.server.file_payload = "B" * (9 << 20)
+        p.stdin.write(b'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sandbox_file_read",'
+                      b'"arguments":{"sandbox_id":"sbx-test-111","path":"/huge.txt"}}}\n')
+        p.stdin.flush()
+        body2 = json.loads(p.stdout.readline().decode("utf-8"))["result"]["content"][0]["text"]
+        if "响应超上限" in body2:
+            ok("sandbox_file_read 超读缓冲时带截断提示")
+        else:
+            bad("sandbox_file_read 超读缓冲但无截断提示（仍会静默截断）")
     finally:
         p.kill()
         srv.shutdown()

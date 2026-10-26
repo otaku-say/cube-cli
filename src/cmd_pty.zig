@@ -233,9 +233,27 @@ fn cmdPtyRead(c: *Ctx, a: util.Args) !void {
 
     const keep_header = a.has("raw");
     const follow = a.has("follow");
-    const lines_n: u64 = if (a.get("lines")) |n| (std.fmt.parseInt(u64, n, 10) catch 0) else 0;
-    var off: u64 = if (a.get("offset")) |o| (std.fmt.parseInt(u64, o, 10) catch 0) else 0;
-    const limit: u64 = if (a.get("limit")) |l| (std.fmt.parseInt(u64, l, 10) catch 0) else 0;
+    var lines_n: u64 = 0;
+    if (a.get("lines")) |n| {
+        lines_n = std.fmt.parseInt(u64, n, 10) catch {
+            try c.out.print("错误：--lines= 需要非负整数（收到 {s}）\n", .{n});
+            return error.BadArg;
+        };
+    }
+    var off: u64 = 0;
+    if (a.get("offset")) |o| {
+        off = std.fmt.parseInt(u64, o, 10) catch {
+            try c.out.print("错误：--offset= 需要非负整数（收到 {s}）；请用等号写法 --offset=0\n", .{o});
+            return error.BadArg;
+        };
+    }
+    var limit: u64 = 0;
+    if (a.get("limit")) |l| {
+        limit = std.fmt.parseInt(u64, l, 10) catch {
+            try c.out.print("错误：--limit= 需要非负整数（收到 {s}）；请用等号写法 --limit=65536\n", .{l});
+            return error.BadArg;
+        };
+    }
 
     // tail 模式：一次读全量取末 N 行
     if (lines_n > 0 and !follow) {

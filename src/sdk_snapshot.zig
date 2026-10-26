@@ -86,8 +86,9 @@ pub fn snapshotRollback(self: *Sdk, sid: []const u8, snapshot_id: []const u8, wa
 }
 
 /// 删除快照（DELETE /templates/<snapshotID>）。
+/// snapshotID 也来自命令行（破坏性命令），必须转义后再拼路径。
 pub fn snapshotDelete(self: *Sdk, snapshot_id: []const u8) !void {
-    const path = try std.fmt.allocPrint(self.arena, "/templates/{s}", .{snapshot_id});
+    const path = try std.fmt.allocPrint(self.arena, "/templates/{s}", .{try jsonfmt.qenc(self.arena, snapshot_id, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     _ = try self.control(.DELETE, path, null, buf);
 }

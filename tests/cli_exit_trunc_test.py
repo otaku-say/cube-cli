@@ -13,6 +13,9 @@
   · get 超长文件  → stderr 有「已截断」+ 非 0 退出
   · envd 500      → stderr 有 `HTTP 500: ...`（状态码与 body 可见）
   · --env=缺失变量 → stderr 有提示
+  · envd deadline_exceeded（没有 exitCode）→ 退出码 124 + 可读提示（不能静默 exit 0）
+  · 文件恰好等于读缓冲上限 → 完整内容、不报截断
+  · sandboxID 含 `?` → 路径转义后才拼，不能变成查询串
 
 用法： python3 tests/cli_exit_trunc_test.py --bin zig-out/bin/cube-cli
 """
@@ -28,18 +31,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 BIG = 9 << 20  # > CLI 读缓冲（exec 2 MiB / 文件 8 MiB）
+EXACT = 8 << 20  # 恰好等于文件读缓冲：完整内容，不是截断
 
 
-def connect_stream(events):
+def connect_stream(events, end=None):
     buf = bytearray()
     for ev in events:
         payload = json.dumps(ev, separators=(",", ":")).encode()
         buf.append(0)
         buf.extend(len(payload).to_bytes(4, "big"))
         buf.extend(payload)
+    payload = json.dumps(end or {}, separators=(",", ":")).encode()
     buf.append(2)
-    buf.extend((2).to_bytes(4, "big"))
-    buf.extend(b"{}")
+    buf.extend(len(payload).to_bytes(4, "big"))
+    buf.extend(payload)
     return bytes(buf)
 
 
@@ -74,6 +79,7 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         p = u.path
+        self.server.seen.append(self.path)
 
         if p.endswith("/connect"):
             self._send(200, '{"envdAccessToken":"tok","sandboxID":"SID"}')
@@ -84,6 +90,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(403, "permission denied: /root/errfile", "text/plain")
             elif "bigfile" in path:
                 self._send(200, b"x" * BIG, "application/octet-stream")
+            elif "exactfile" in path:
+                self._send(200, b"y" * EXACT, "application/octet-stream")
             else:
                 self._send(200, "small file content\n", "application/octet-stream")
             return
@@ -94,6 +102,12 @@ class Handler(BaseHTTPRequestHandler):
             if '"exit3"' in body:
                 out = base64.b64encode(b"hello\n").decode()
                 self._send(200, connect_stream([{"pid": 7}, {"stdout": out}, {"exitCode": 3}]),
+                           "application/connect+json")
+            elif '"deadlinefail"' in body:
+                # envd 到点的真实收尾：end-stream 里报 deadline_exceeded，没有 exitCode
+                out = base64.b64encode(b"partial\n").decode()
+                self._send(200, connect_stream([{"pid": 7}, {"stdout": out}],
+                                               {"error": {"code": "deadline_exceeded", "message": "deadline exceeded"}}),
                            "application/connect+json")
             elif '"bigout"' in body:
                 out = base64.b64encode(b"A" * (3 << 20)).decode()
@@ -124,6 +138,7 @@ def main():
 
     port = free_port()
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    srv.seen = []
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     base = f"http://127.0.0.1:{port}"
@@ -174,6 +189,24 @@ def main():
     rc, out, err = run("exec", "SID", "ok", "--env=CUBE_NO_SUCH_VAR_XYZ")
     check("提示已跳过", "CUBE_NO_SUCH_VAR_XYZ" in err and "跳过" in err, repr(err[:200]))
     check("不因缺变量改写退出码", rc == 0, f"rc={rc}")
+
+    print("== exec --timeout 到点（deadline_exceeded）不能静默成功 ==")
+    rc, out, err = run("exec", "SID", "deadlinefail", "--timeout=1")
+    check("超时 → 退出码 124", rc == 124, f"rc={rc}")
+    check("stderr 有 deadline/超时提示", "deadline_exceeded" in err, repr(err[:200]))
+    check("stdout 只含已收到的输出", "partial" in out and "exit" not in out, repr(out[:100]))
+
+    print("== cat 恰好等于读缓冲上限时是完整内容（不能误报截断） ==")
+    rc, out, err = run("cat", "SID", "/exactfile")
+    check("8MiB 整文件 → 退出 0", rc == 0, f"rc={rc} err={err[:120]!r}")
+    check("8MiB 整文件 → 不报截断", "截断" not in err, repr(err[:200]))
+    check("8MiB 整文件 → 内容完整", len(out) == EXACT, f"len={len(out)}")
+
+    print("== sandboxID 必须转义后再拼数据面路径 ==")
+    srv.seen.clear()
+    rc, out, err = run("cat", "SID?evil=1", "/f")
+    check("带 ? 的 sandboxID 仍能读到文件", rc == 0 and "small file content" in out, f"rc={rc} out={out[:80]!r} err={err[:120]!r}")
+    check("请求路径里 ? 被转义（没有变成查询串）", any("SID%3F" in s for s in srv.seen), repr(srv.seen[:4]))
 
     srv.shutdown()
     print(f"\n{'全部通过' if not fails else '失败 %d 项：%s' % (len(fails), fails)}")

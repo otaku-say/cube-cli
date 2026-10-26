@@ -162,19 +162,21 @@ pub const Sdk = struct {
         return self.proxy.len > 0;
     }
 
-    /// 沙箱内 envd 基址（走数据面路径风格路由）。
+    /// 沙箱内 envd 基址（走数据面路径风格路由）。sid 必须转义后再拼路径
+    /// （如 `exec 'abc?x=1' ...` 不能变成 `/sandbox/abc?x=1/49983`）；
+    /// 这里是最底层的公共拼接点，改一处盖住全部数据面命令。
     pub fn envdBase(self: *Sdk, sid: []const u8) ![]const u8 {
         if (self.proxy.len == 0) {
             self.last_config_error = true;
             self.missing_config_name = "CUBESANDBOX_PROXY_URL";
             return error.MissingConfig;
         }
-        return std.fmt.allocPrint(self.arena, "{s}/sandbox/{s}/49983", .{ self.proxy, sid });
+        return std.fmt.allocPrint(self.arena, "{s}/sandbox/{s}/49983", .{ self.proxy, try envd.urlEncode(self.arena, sid) });
     }
 
     /// connect 沙箱，拿 envdAccessToken（可空）。
     pub fn connectToken(self: *Sdk, sid: []const u8, buf: []u8) !?[]const u8 {
-        const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/connect", .{sid});
+        const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/connect", .{try envd.urlEncode(self.arena, sid)});
         const res = try self.control(.POST, path, "{}", buf);
         return envd.extractString(self.arena, res.body, "envdAccessToken");
     }
