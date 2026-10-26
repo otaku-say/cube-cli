@@ -30,10 +30,11 @@ fn tSnapList(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const next_token = try a.strOpt(srv.arena, "next");
     var limit: ?u32 = null;
     if (try a.intOpt(srv.arena, "limit")) |l| {
-        if (l > 0) limit = @intCast(l);
+        // l 来自 i64：不夹上限会 integer cast panic（打死整个 MCP 进程）
+        if (l > 0) limit = @intCast(@min(l, std.math.maxInt(u32)));
     }
 
-    const body = sdk_snapshot.snapshotList(srv.sdk, .{
+    const r = sdk_snapshot.snapshotListWithToken(srv.sdk, .{
         .sandbox_id = sid,
         .backend = backend,
         .limit = limit,
@@ -42,7 +43,10 @@ fn tSnapList(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
         error.MissingConfig, error.HttpError => srv.sdkError(),
         else => ToolResult.err(@errorName(e)),
     };
-    return ToolResult.ok(types.clampText(srv.arena, body));
+    var w: std.Io.Writer.Allocating = .init(srv.arena);
+    try w.writer.writeAll(r.body);
+    if (r.next_token) |nt| try w.writer.print("\n[next] 还有更多：next={s}", .{nt});
+    return ToolResult.ok(types.clampText(srv.arena, w.written()));
 }
 
 fn tSnapRollback(srv: *Server, a: *argmod.Args) anyerror!ToolResult {

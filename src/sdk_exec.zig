@@ -5,6 +5,7 @@ const std = @import("std");
 const sdkmod = @import("sdk.zig");
 const envd = @import("envd.zig");
 const httpc = @import("httpc.zig");
+const types = @import("mcp_types.zig");
 
 const Sdk = sdkmod.Sdk;
 
@@ -64,7 +65,9 @@ pub fn newTag(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
 pub fn sandboxExec(self: *Sdk, sid: []const u8, cmd: []const u8, opt: ExecOptions) !ExecResult {
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const dp = try self.dataPlane(sid, buf);
-    const timeout_ms: u64 = opt.timeout_s * 1000;
+    // 参数是 i64，乘 1000 前先夹住（@min 会把结果收窄成 u17，先标回 u64 再乘）
+    const capped_s: u64 = @min(opt.timeout_s, 86_400);
+    const timeout_ms: u64 = capped_s * 1000;
     const res = try envd.exec(
         self.arena,
         self.client,
@@ -169,7 +172,8 @@ fn readDelta(self: *Sdk, base: []const u8, token: ?[]const u8, user: ?[]const u8
             data = data[off..];
         }
     }
-    if (limit > 0 and data.len > limit) data = data[0..limit];
+    // 截断回退到 UTF-8 字符边界，避免日志行切开多字节字符
+    if (limit > 0 and data.len > limit) data = data[0..types.utf8Boundary(data, @intCast(limit))];
     return .{ .data = self.arena.dupe(u8, data) catch data, .next = off + @as(u64, @intCast(data.len)) };
 }
 

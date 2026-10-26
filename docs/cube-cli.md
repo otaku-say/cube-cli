@@ -244,7 +244,7 @@ cube-cli code —— 用解释器在沙箱内跑一段代码
        --mode=      interp（默认，任何镜像可用）或 kernel（需要镜像监听
                   并对外暴露 49999；缺失时报 HTTP 502，不是 CLI 缺陷）。
        --lang=      python（默认）/ js（js、javascript、node、nodejs）/ bash（sh、shell）。
-       --timeout=   秒；缺省不设截止（同 SDK run_code(timeout=None)）。
+       --timeout=   秒；缺省不设截止（同 SDK run_code(timeout=None)）。\n        \\                   kernel 模式不支持 --timeout（该通道的读超时由服务端控制，传了也不生效）。
        --env= / --user=  同 exec。
 示例:  cube-cli code $SID 'print(sum(range(10)))'
        cube-cli code $SID 'console.log(1+1)' --lang=js
@@ -452,7 +452,7 @@ cube-cli clone —— 打快照并用它当模板批量克隆
        → 默认删除中间快照。任一创建失败会回滚已创建的克隆体（要么全给、要么不留孤儿）。
 用法:  cube-cli clone <sandboxID> [--n=N|-n=N] [--concurrency=C] [--timeout=秒]
                         [--note=名] [--keep-snapshot] [--no-rollback-on-fail]
-参数:  --n= / -n=            克隆个数，默认 1。
+参数:  --n= / -n=            克隆个数，默认 1，上限 200（超过按 200 执行）。
        --concurrency=        同时创建的并发数，默认 1（串行）；自动夹到 [1, N]。
        --timeout=            新沙箱的空闲回收秒数。
        --note=               写入克隆体 metadata.note（默认 "<agent> · clone"）。

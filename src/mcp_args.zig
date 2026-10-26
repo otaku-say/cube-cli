@@ -228,24 +228,59 @@ pub const Args = struct {
     }
 };
 
-/// JSON 字符串转义（不含外层引号）——控制字符一律 \\uXXXX，UTF-8 原样通过。
+/// JSON 字符串转义（不含外层引号）——控制字符一律 \\uXXXX，
+/// 合法 UTF-8 原样通过；非法字节写 \\ufffd，保证 stdout 永远是合法 UTF-8。
 pub fn writeEscaped(w: *std.Io.Writer, s: []const u8) !void {
-    for (s) |c| {
+    var i: usize = 0;
+    while (i < s.len) {
+        const c = s[i];
         switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
-            0x08 => try w.writeAll("\\b"),
-            0x0c => try w.writeAll("\\f"),
+            '"' => {
+                try w.writeAll("\\\"");
+                i += 1;
+            },
+            '\\' => {
+                try w.writeAll("\\\\");
+                i += 1;
+            },
+            '\n' => {
+                try w.writeAll("\\n");
+                i += 1;
+            },
+            '\r' => {
+                try w.writeAll("\\r");
+                i += 1;
+            },
+            '\t' => {
+                try w.writeAll("\\t");
+                i += 1;
+            },
+            0x08 => {
+                try w.writeAll("\\b");
+                i += 1;
+            },
+            0x0c => {
+                try w.writeAll("\\f");
+                i += 1;
+            },
             else => {
                 if (c < 0x20) {
                     var b: [6]u8 = undefined;
                     const t = try std.fmt.bufPrint(&b, "\\u{x:0>4}", .{c});
                     try w.writeAll(t);
-                } else {
+                    i += 1;
+                } else if (c < 0x80) {
                     try w.writeAll(&[_]u8{c});
+                    i += 1;
+                } else {
+                    const len: usize = std.unicode.utf8ByteSequenceLength(c) catch 0;
+                    if (len > 0 and i + len <= s.len and (std.unicode.utf8Decode(s[i..][0..len]) catch null) != null) {
+                        try w.writeAll(s[i..][0..len]);
+                        i += len;
+                    } else {
+                        try w.writeAll("\\ufffd");
+                        i += 1;
+                    }
                 }
             },
         }

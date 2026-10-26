@@ -16,7 +16,9 @@ fn tExec(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const cwd = try a.strOpt(srv.arena, "cwd");
     const user = try a.strOpt(srv.arena, "user");
     const timeout_s: u64 = @intCast(@max(0, try a.intOr(srv.arena, "timeout", 0)));
-    const env_json = a.objJsonText(srv.arena, "env") catch return srv.argError(a);
+    // objJsonText 自带花括号，envd.exec 会再包一层，故此处剥掉
+    const env_raw = a.objJsonText(srv.arena, "env") catch return srv.argError(a);
+    const env_json = if (env_raw) |e| e[1 .. e.len - 1] else null;
 
     const r = sdk_exec.sandboxExec(srv.sdk, sid, cmd, .{
         .cwd = cwd,
@@ -28,17 +30,18 @@ fn tExec(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
         else => ToolResult.err(@errorName(e)),
     };
 
-    var w = std.Io.Writer.fixed(try srv.arena.alloc(u8, types.max_text_bytes));
-    if (r.stdout.len > 0) try w.writeAll(r.stdout);
+    var w: std.Io.Writer.Allocating = .init(srv.arena);
+    const wr = &w.writer;
+    if (r.stdout.len > 0) try wr.writeAll(r.stdout);
     if (r.stderr.len > 0) {
-        if (w.buffered().len > 0 and w.buffered()[w.buffered().len - 1] != '\n') try w.writeAll("\n");
-        try w.print("--- stderr ---\n{s}", .{r.stderr});
+        if (wr.buffered().len > 0 and wr.buffered()[wr.buffered().len - 1] != '\n') try wr.writeAll("\n");
+        try wr.print("--- stderr ---\n{s}", .{r.stderr});
     }
     if (r.exit_code != 0) {
-        if (w.buffered().len > 0 and w.buffered()[w.buffered().len - 1] != '\n') try w.writeAll("\n");
-        try w.print("（exit {d}）", .{r.exit_code});
+        if (wr.buffered().len > 0 and wr.buffered()[wr.buffered().len - 1] != '\n') try wr.writeAll("\n");
+        try wr.print("（exit {d}）", .{r.exit_code});
     }
-    return ToolResult.ok(types.clampText(srv.arena, w.buffered()));
+    return ToolResult.ok(types.clampText(srv.arena, w.written()));
 }
 
 fn tExecAsync(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
@@ -48,7 +51,8 @@ fn tExecAsync(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const user = try a.strOpt(srv.arena, "user");
     const timeout_s: u64 = @intCast(@max(0, try a.intOr(srv.arena, "timeout", 0)));
     const no_stdin = a.boolOr(srv.arena, "no_stdin", false) catch return srv.argError(a);
-    const env_json = a.objJsonText(srv.arena, "env") catch return srv.argError(a);
+    const env_raw = a.objJsonText(srv.arena, "env") catch return srv.argError(a);
+    const env_json = if (env_raw) |e| e[1 .. e.len - 1] else null;
 
     const r = sdk_exec.sandboxExecAsync(srv.sdk, sid, cmd, .{
         .cwd = cwd,
@@ -78,22 +82,23 @@ fn tExecLogs(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
         else => ToolResult.err(@errorName(e)),
     };
 
-    var w = std.Io.Writer.fixed(try srv.arena.alloc(u8, types.max_text_bytes));
-    if (r.stdout.len > 0) try w.writeAll(r.stdout);
+    var w: std.Io.Writer.Allocating = .init(srv.arena);
+    const wr = &w.writer;
+    if (r.stdout.len > 0) try wr.writeAll(r.stdout);
     if (r.stderr.len > 0) {
-        if (w.buffered().len > 0 and w.buffered()[w.buffered().len - 1] != '\n') try w.writeAll("\n");
-        try w.print("--- stderr ---\n{s}", .{r.stderr});
+        if (wr.buffered().len > 0 and wr.buffered()[wr.buffered().len - 1] != '\n') try wr.writeAll("\n");
+        try wr.print("--- stderr ---\n{s}", .{r.stderr});
     }
-    if (w.buffered().len > 0 and w.buffered()[w.buffered().len - 1] != '\n') try w.writeAll("\n");
-    try w.print("[exec-logs] stdout 偏移 {d} B；stderr 偏移 {d} B；", .{ r.next_offset, r.next_stderr_offset });
+    if (wr.buffered().len > 0 and wr.buffered()[wr.buffered().len - 1] != '\n') try wr.writeAll("\n");
+    try wr.print("[exec-logs] stdout 偏移 {d} B；stderr 偏移 {d} B；", .{ r.next_offset, r.next_stderr_offset });
     if (r.exit_code) |code| {
-        try w.print("退出码 {d}", .{code});
+        try wr.print("退出码 {d}", .{code});
     } else if (r.is_alive) {
-        try w.writeAll("进程仍在运行");
+        try wr.writeAll("进程仍在运行");
     } else {
-        try w.writeAll("进程已结束");
+        try wr.writeAll("进程已结束");
     }
-    return ToolResult.ok(types.clampText(srv.arena, w.buffered()));
+    return ToolResult.ok(types.clampText(srv.arena, w.written()));
 }
 
 fn tExecKill(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
@@ -101,6 +106,14 @@ fn tExecKill(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const pid = a.intReq(srv.arena, "pid") catch return srv.argError(a);
     const user = try a.strOpt(srv.arena, "user");
     const sig = try a.strOpt(srv.arena, "signal");
+    if (sig) |s| {
+        // 白名单：signal 会裸拼进上游请求体，必须挡住引号等注入字符
+        if (!std.mem.startsWith(u8, s, "SIGNAL_")) return ToolResult.err("参数错误：signal 必须形如 SIGNAL_SIGKILL");
+        for (s["SIGNAL_".len..]) |c| {
+            if (!std.ascii.isUpper(c) and !std.ascii.isDigit(c) and c != '_')
+                return ToolResult.err("参数错误：signal 只能包含大写字母、数字和下划线");
+        }
+    }
 
     sdk_exec.sandboxExecKill(srv.sdk, sid, pid, user, sig) catch |e| return switch (e) {
         error.MissingConfig, error.HttpError => srv.sdkError(),
@@ -132,7 +145,8 @@ fn tCode(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const lang = try a.strOpt(srv.arena, "lang") orelse "python";
     const timeout_s: u64 = @intCast(@max(0, try a.intOr(srv.arena, "timeout", 0)));
     const user = try a.strOpt(srv.arena, "user");
-    const env_json = a.objJsonText(srv.arena, "env") catch return srv.argError(a);
+    const env_raw = a.objJsonText(srv.arena, "env") catch return srv.argError(a);
+    const env_json = if (env_raw) |e| e[1 .. e.len - 1] else null;
 
     const r = sdk_exec.sandboxCode(srv.sdk, sid, code, .{
         .mode = mode,
@@ -147,17 +161,18 @@ fn tCode(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
         else => ToolResult.err(@errorName(e)),
     };
 
-    var w = std.Io.Writer.fixed(try srv.arena.alloc(u8, types.max_text_bytes));
-    if (r.stdout.len > 0) try w.writeAll(r.stdout);
+    var w: std.Io.Writer.Allocating = .init(srv.arena);
+    const wr = &w.writer;
+    if (r.stdout.len > 0) try wr.writeAll(r.stdout);
     if (r.stderr.len > 0) {
-        if (w.buffered().len > 0 and w.buffered()[w.buffered().len - 1] != '\n') try w.writeAll("\n");
-        try w.print("--- stderr ---\n{s}", .{r.stderr});
+        if (wr.buffered().len > 0 and wr.buffered()[wr.buffered().len - 1] != '\n') try wr.writeAll("\n");
+        try wr.print("--- stderr ---\n{s}", .{r.stderr});
     }
     if (r.exit_code != 0) {
-        if (w.buffered().len > 0 and w.buffered()[w.buffered().len - 1] != '\n') try w.writeAll("\n");
-        try w.print("（exit {d}）", .{r.exit_code});
+        if (wr.buffered().len > 0 and wr.buffered()[wr.buffered().len - 1] != '\n') try wr.writeAll("\n");
+        try wr.print("（exit {d}）", .{r.exit_code});
     }
-    return ToolResult.ok(types.clampText(srv.arena, w.buffered()));
+    return ToolResult.ok(types.clampText(srv.arena, w.written()));
 }
 
 pub const tools = [_]Tool{

@@ -14,6 +14,8 @@ const ToolResult = types.ToolResult;
 fn tSandboxCreate(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const template = try a.strOpt(srv.arena, "template");
     const need = try a.strOpt(srv.arena, "need") orelse "code";
+    if (!std.mem.eql(u8, need, "code") and !std.mem.eql(u8, need, "browser") and !std.mem.eql(u8, need, "desktop"))
+        return ToolResult.err("参数错误：need 只能是 code / browser / desktop");
     const timeout = try a.intOpt(srv.arena, "timeout");
     const note = try a.strOpt(srv.arena, "note");
     const agent = try a.strOpt(srv.arena, "agent");
@@ -21,6 +23,10 @@ fn tSandboxCreate(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const env_vars = a.objJsonText(srv.arena, "env") catch return srv.argError(a);
     const volumes = (try a.strArrayOpt(srv.arena, "volume")) orelse &.{};
     const lifecycle = try a.strOpt(srv.arena, "lifecycle");
+    if (lifecycle) |lc| {
+        if (!std.mem.eql(u8, lc, "kill") and !std.mem.eql(u8, lc, "pause"))
+            return ToolResult.err("参数错误：lifecycle 只能是 kill / pause（未知值会被当成 kill）");
+    }
     const auto_resume = try a.boolOpt(srv.arena, "auto_resume");
     const no_internet = try a.boolOpt(srv.arena, "no_internet");
     const distribution_scope = try a.strOpt(srv.arena, "distribution_scope");
@@ -109,7 +115,8 @@ fn tSandboxInfo(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
 fn tSandboxPause(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const sid = a.str(srv.arena, "sandbox_id") catch return srv.argError(a);
     const wait = (a.boolOpt(srv.arena, "wait") catch return srv.argError(a)) orelse false;
-    const timeout_s: u64 = @intCast(@max(0, a.intOr(srv.arena, "timeout", 60) catch return srv.argError(a)));
+    const timeout_raw = a.intOr(srv.arena, "timeout", 60) catch return srv.argError(a);
+    const timeout_s: u64 = @intCast(@max(0, @min(timeout_raw, 120)));
 
     sdk_lifecycle.sandboxPause(srv.sdk, sid) catch |e| return switch (e) {
         error.MissingConfig, error.HttpError => srv.sdkError(),
@@ -205,7 +212,7 @@ fn tSandboxPorts(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
 fn tSandboxClone(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
     const sid = a.str(srv.arena, "sandbox_id") catch return srv.argError(a);
     const n_raw = try a.intOr(srv.arena, "n", 1);
-    const n: usize = @intCast(@max(1, n_raw));
+    const n: usize = @intCast(@min(@max(1, n_raw), 100));
     const timeout = try a.intOpt(srv.arena, "timeout");
     const note = try a.strOpt(srv.arena, "note");
     const keep_snapshot = try a.boolOr(srv.arena, "keep_snapshot", false);
@@ -217,6 +224,7 @@ fn tSandboxClone(srv: *Server, a: *argmod.Args) anyerror!ToolResult {
         .keep_snapshot = keep_snapshot,
     }) catch |e| return switch (e) {
         error.MissingConfig, error.HttpError => srv.sdkError(),
+        error.CloneNoID => ToolResult.err("克隆失败：上游响应缺少 sandboxID（已回滚已创建的实例）"),
         else => ToolResult.err(@errorName(e)),
     };
     return ToolResult.ok(types.clampText(srv.arena, body));
@@ -311,7 +319,7 @@ pub const tools = [_]Tool{
         .name = "sandbox_clone",
         .description = "以指定沙箱为蓝本，先打快照再批量克隆出 n 个全新的独立沙箱。",
         .schema =
-        \\{"type":"object","properties":{"sandbox_id":{"type":"string","description":"源沙箱 ID"},"n":{"type":"integer","description":"克隆数量（默认 1）"},"timeout":{"type":"integer","description":"克隆沙箱超时秒数"},"note":{"type":"string","description":"克隆沙箱备注"},"keep_snapshot":{"type":"boolean","description":"是否保留中间快照，默认 false"}},"required":["sandbox_id"]}
+        \\{"type":"object","properties":{"sandbox_id":{"type":"string","description":"源沙箱 ID"},"n":{"type":"integer","description":"克隆数量（默认 1，上限 100）"},"timeout":{"type":"integer","description":"克隆沙箱超时秒数"},"note":{"type":"string","description":"克隆沙箱备注"},"keep_snapshot":{"type":"boolean","description":"是否保留中间快照，默认 false"}},"required":["sandbox_id"]}
         ,
         .handler = tSandboxClone,
     },

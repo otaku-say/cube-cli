@@ -375,8 +375,8 @@ pub fn sandboxClone(self: *Sdk, sid: []const u8, opt: CloneOptions) ![]const u8 
     const snap = envd.extractString(self.arena, snap_body, "snapshotID") orelse return error.SnapshotFailed;
 
     const n = if (opt.n == 0) 1 else opt.n;
-    var w = std.Io.Writer.fixed(try self.arena.alloc(u8, 64 << 10));
-    try w.print("快照: {s}\n克隆沙箱列表:\n", .{snap});
+    var w: std.Io.Writer.Allocating = .init(self.arena);
+    try w.writer.print("快照: {s}\n克隆沙箱列表:\n", .{snap});
 
     const created = try self.arena.alloc([]const u8, n);
     for (0..n) |i| {
@@ -394,16 +394,25 @@ pub fn sandboxClone(self: *Sdk, sid: []const u8, opt: CloneOptions) ![]const u8 
             }
             return e;
         };
-        const csid = envd.extractString(self.arena, c_body.body, "sandboxID") orelse snap;
+        const csid = envd.extractString(self.arena, c_body.body, "sandboxID") orelse {
+            // 拿不到 ID 就不能拿 snap_xxx 冒充；回滚已建实例并报专用错误
+            for (created[0..i]) |c| {
+                _ = sandboxDelete(self, c, true) catch {};
+            }
+            if (!opt.keep_snapshot) {
+                _ = sdk_snapshot.snapshotDelete(self, snap) catch {};
+            }
+            return error.CloneNoID;
+        };
         created[i] = csid;
-        try w.print("  {d}: {s}\n", .{ i + 1, csid });
+        try w.writer.print("  {d}: {s}\n", .{ i + 1, csid });
     }
 
     if (!opt.keep_snapshot) {
         _ = sdk_snapshot.snapshotDelete(self, snap) catch {};
     }
 
-    return w.buffered();
+    return w.written();
 }
 
 // ---------------- rm（带生命周期互斥重试） ----------------
