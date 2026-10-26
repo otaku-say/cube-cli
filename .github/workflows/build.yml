@@ -1,0 +1,135 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 目标矩阵：Cindy 支持的每个平台都要有对应产物。
+# 产物名统一 <tool>-<os>-<arch>[.exe]；zig 的 -Dtarget= 三元组是 zig 的对外契约，原样保留。
+#   cube-cli-linux-arm64     aarch64-linux-musl
+#   cube-cli-linux-amd64     x86_64-linux-musl
+#   cube-cli-macos-arm64     aarch64-macos       （codesign - 临时签名）
+#   cube-cli-macos-amd64     x86_64-macos        （codesign - 临时签名）
+#   cube-cli-windows-amd64   x86_64-windows-gnu
+#   cube-cli-windows-arm64   aarch64-windows-gnu （无可用 arm64 Windows runner，仅校验编译）
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-linux-musl,  name: cube-cli-linux-arm64,   runner: ubuntu-24.04-arm }
+          - { target: x86_64-linux-musl,   name: cube-cli-linux-amd64,   runner: ubuntu-latest }
+          - { target: aarch64-macos,       name: cube-cli-macos-arm64,   runner: macos-14 }
+          - { target: x86_64-macos,        name: cube-cli-macos-amd64,   runner: macos-14 }
+          - { target: x86_64-windows-gnu,  name: cube-cli-windows-amd64, runner: ubuntu-latest }
+          - { target: aarch64-windows-gnu, name: cube-cli-windows-arm64, runner: ubuntu-latest }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: 构建
+        shell: bash
+        run: |
+          set -o pipefail
+          zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }} 2>&1 | tee build.log
+
+      - name: 失败时上传构建日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: err-${{ matrix.name }}
+          path: build.log
+
+      - name: 收集产物
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          case "${{ matrix.target }}" in *windows*) ext=".exe" ;; esac
+          cp "zig-out/bin/cube-cli${ext}" "${{ matrix.name }}${ext}"
+          ls -l "${{ matrix.name }}${ext}"
+
+      - name: macOS 临时签名
+        if: contains(matrix.target, 'macos')
+        run: |
+          f="${{ matrix.name }}"
+          codesign --force --sign - --timestamp=none "$f"
+          codesign --verify "$f"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ matrix.name }}
+            ${{ matrix.name }}.exe
+
+  # 产物必须在对应平台真跑一遍 version，编译通过不等于能运行
+  smoke:
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { artifact: cube-cli-linux-arm64,   runner: ubuntu-24.04-arm }
+          - { artifact: cube-cli-linux-amd64,   runner: ubuntu-latest }
+          - { artifact: cube-cli-macos-arm64,   runner: macos-14 }
+          - { artifact: cube-cli-macos-amd64,   runner: macos-14 }
+          - { artifact: cube-cli-windows-amd64, runner: windows-latest }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: bin
+
+      - name: 冒烟测试
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la bin/
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            if [ -f "bin/${{ matrix.artifact }}.exe" ]; then
+              exe="bin/${{ matrix.artifact }}.exe"
+            else
+              mv "bin/${{ matrix.artifact }}" "bin/${{ matrix.artifact }}.exe"
+              exe="bin/${{ matrix.artifact }}.exe"
+            fi
+            "$exe" version
+          else
+            chmod +x "bin/${{ matrix.artifact }}"
+            "bin/${{ matrix.artifact }}" version
+          fi
+
+  release:
+    needs: [build, smoke]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成校验和
+        run: |
+          cd dist
+          rm -f build.log
+          ls -la
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: latest
+          files: dist/*
+          make_latest: true

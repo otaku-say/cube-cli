@@ -1,0 +1,1059 @@
+//! help.zig —— cube-cli 的**权威命令面**：命令表 + 统一帮助输出。
+//!
+//! 设计约束：
+//!   1. 命令表是唯一事实源，dispatch 的每个分支都在这里有条目；改命令先改这里。
+//!   2. `<cmd> --help` / `<cmd> -h` / `help <cmd>` 三种写法等价，且**只打印不执行**
+//!      （必须在 main 的 dispatch 之前拦截，`new --help` 绝不能真的建沙箱）。
+//!   3. `help` 输出分组速查（≤60 行），`help all` 输出完整表，`help <cmd>` 输出单命令详情。
+//!   4. 所有取值型 flag 一律 `--key=value` 等号写法；布尔开关直接写 `--flag`。
+const std = @import("std");
+const cfg = @import("cfg.zig");
+
+pub const tool = "cube-cli";
+pub const repo = "https://github.com/otaku-say/cube-cli";
+pub const docs = "docs/cube-cli.md";
+
+const groups = [_][]const u8{ "沙箱", "生命周期", "快照 / 卷", "模板", "文件", "诊断 / 其它", "进程 / PTY" };
+
+const Entry = struct {
+    name: []const u8,
+    alias: []const u8 = "",
+    group: usize,
+    brief: []const u8,
+    detail: []const u8,
+};
+
+/// 完整命令表。顺序即 `help all` 的输出顺序。
+pub const table = [_]Entry{
+    .{
+        .name = "new",
+        .group = 0,
+        .brief = "建沙箱（默认 aio-code 镜像）",
+        .detail =
+        \\用途:  按能力（--need）或指定模板（--template）新建一个沙箱，并打印 AIO 网关地址
+        \\       （也就是 aiod-cli 的 SANDBOX_BASE）。
+        \\用法:  cube-cli new [--need=code|browser|desktop] [--template=<模板ID>]
+        \\                      [--timeout=<秒>] [--note=<名称>] [--agent=<谁>] [--task=<做什么>]
+        \\                      [--env=K=V] [--volume=卷名[:挂载路径]] [--lifecycle=kill|pause]
+        \\                      [--auto-resume] [--no-internet] [--distribution-scope=节点,IP]
+        \\                      [--mcp=<JSON>]
+        \\                      [--mcp: 遵循 E2B 规范的泛化 MCP JSON 对象，支持三种模式：
+        \\                             ① catalog 预装/声明服务：`{"<服务名>": {}}`（如 `{"time":{}}`）
+        \\                             ② GitHub 动态仓库服务：`{"github/<owner>/<repo>": {"runCmd":"...","envs":{...}}}`
+        \\                             ③ 任意自定义命令服务：`{"<服务名>": {"runCmd":"<启动命令>","envs":{...}}}`]
+        \\参数:  --need=      需要的能力，默认 code。不带任何参数就是 aio-code 镜像（自带 Zig 工具链）
+        \\                    browser / desktop 分别对应 aio-daemon / aio-computer 镜像。
+        \\       --template=  直接指定模板：先查服务端别名（与 tpl-resolve 同接口），命中即用；
+        \\                    失败回退本地匹配（模板 ID 全等 / 别名 / 镜像子串唯一命中）；
+        \\                    都未命中则原样交给服务端解析。优先于 --need。
+        \\       --timeout=   空闲回收秒数；不传用平台默认。
+        \\       --note=      显示名（ls 的"备注"列）。不给时按 "<agent> · <task>" 生成。
+        \\       --agent=     谁开的；缺省读环境变量 CUBESANDBOX_AGENT_NAME，再缺省为 cube-cli。
+        \\       --task=      做什么，进 metadata.task，admin WebUI 会渲染。
+        \\       --env=       K=V 注入沙箱进程环境（可重复）→ envVars。
+        \\       --volume=    挂持久卷：`卷名` 或 `卷名:挂载路径`（默认 /mnt/卷名）→ volumeMounts。
+        \\       --lifecycle= kill（默认）或 pause（空闲挂起，可配合 --auto-resume 随用随起）。
+        \\       --no-internet  禁止出网（allow_internet_access=false，与 SDK/e2b 同名）。
+        \\       --distribution-scope=  逗号分隔的节点 ID / 主机 IP，限定调度范围。
+        \\示例:  cube-cli new --note=build --agent=ci --task="跑 Zig 构建"
+        \\       cube-cli new --need=browser --timeout=1800
+        \\注意:  `--need=` 是动态挑模板（能力覆盖 + 更薄者优先）；没有满足的 READY 模板会
+        \\       报「没有满足 --need=... 的 READY 模板」并以非 0 退出。
+        \\       `cube-cli new --help` 只打印本页，不会建沙箱。
+        ,
+    },
+    .{
+        .name = "ls",
+        .group = 0,
+        .brief = "列出沙箱（ID / 模板 / 状态 / 备注）",
+        .detail =
+        \\用途:  列出账号下所有沙箱。
+        \\用法:  cube-cli ls
+        \\参数:  无。
+        \\示例:  cube-cli ls
+        \\注意:  "备注"列取 metadata.note，没有则取 metadata.agent，再没有显示 "-"。
+        ,
+    },
+    .{
+        .name = "rm",
+        .group = 0,
+        .brief = "销毁沙箱",
+        .detail =
+        \\用途:  销毁一个沙箱（DELETE /sandboxes/<id>）。
+        \\用法:  cube-cli rm <sandboxID>
+        \\参数:  <sandboxID>  位置参数，必填。
+        \\示例:  cube-cli rm 799fd44ef23e49eb8f4357807da32323
+        \\注意:  不可恢复；正在跑的进程一并终止。ID 可从 `cube-cli ls` 取。
+        ,
+    },
+    .{
+        .name = "exec",
+        .group = 0,
+        .brief = "在沙箱内执行命令",
+        .detail =
+        \\用途:  走沙箱内 envd（49983）执行一条命令并打印 stdout/stderr/exit。
+        \\用法:  cube-cli exec <sandboxID> <命令... | -> [--cwd=<目录>] [--env=NAME|KEY=VAL] [--timeout=<秒>] [--user=<用户>]
+        \\参数:  <sandboxID>  目标沙箱。
+        \\       <命令...>    位置参数（支持 `--` 分隔以安全透传带旗标命令）；当位置参数为 `-` 时从标准输入读取整条命令。
+        \\       --cwd=       工作目录。
+        \\       --env=       K=V 直接给值；只给 NAME 则从**本机环境**读同名变量注入
+        \\                    （敏感值不必出现在命令行 / 进程列表里）。
+        \\       --timeout=   秒；缺省不设截止（同 SDK run(timeout=None)）。给值则作为
+        \\                    envd 硬截止（Connect-Timeout-Ms），到点进程被取消。
+        \\       --user=      以指定用户身份执行（envd Basic 作用域；默认 root）。
+        \\示例:  cube-cli exec $SID 'zig version'
+        \\       cube-cli exec $SID -- python3 --version
+        \\       cube-cli exec $SID 'python3 -c "print(1+1)"' --cwd=/tmp --timeout=300
+        \\       cube-cli exec $SID 'printenv' --env=GITHUB_TOKEN
+        \\       echo 'mcp-gateway --config "{\"time\":{}}"' | cube-cli exec $SID -
+        \\注意:  需要 CUBESANDBOX_PROXY_URL（数据面网关）才有 envd 通道。
+        ,
+    },
+    .{
+        .name = "code",
+        .group = 0,
+        .brief = "用解释器在沙箱内跑一段代码",
+        .detail =
+        \\用途:  两种通道：interp（默认）= 把源码交给解释器跑（等价 exec python3 -c ...，
+        \\       任何镜像可用）；kernel = SDK run_code 的通道，POST <proxy>/sandbox/<sid>/49999/execute
+        \\       （E2B 代码解释器 ndjson：stdout/stderr/result/error）。kernel 需要镜像
+        \\       内置 49999 解释器服务（环境依赖，见下）；aio-default v5 未内置，
+        \\       普通执行请用 interp（默认）或 exec。
+        \\用法:  cube-cli code <sandboxID> <代码...> [--mode=interp|kernel] [--lang=python|js|bash] [--timeout=<秒>] [--env=...] [--user=]
+        \\参数:  <代码...>    位置参数用空格拼接后整体交给解释器。
+        \\       --mode=      interp（默认，任何镜像可用）或 kernel（需要镜像监听
+        \\                  并对外暴露 49999；缺失时报 HTTP 502，不是 CLI 缺陷）。
+        \\       --lang=      python（默认）/ js（js、javascript、node、nodejs）/ bash（sh、shell）。
+        \\       --timeout=   秒；缺省不设截止（同 SDK run_code(timeout=None)）。
+        \\       --env= / --user=  同 exec。
+        \\示例:  cube-cli code $SID 'print(sum(range(10)))'
+        \\       cube-cli code $SID 'console.log(1+1)' --lang=js
+        \\       cube-cli code $SID 'print(1+1)' --mode=kernel
+        \\注意:  语言别名与非法语言：非法值会打印「不支持的语言: xxx」并以非 0 退出。
+        \\       kernel 模式的 result 事件里 html/svg/png 等非文本格式只报大小、不展开。
+        \\       kernel 502 排查：cube-cli ports <SID> 看 49999 是否监听且绑定 0.0.0.0；
+        \\       未监听 = 镜像未内置该服务，改用 --mode=interp 或 exec。
+        ,
+    },
+    .{
+        .name = "ports",
+        .group = 0,
+        .brief = "实测沙箱内实际监听的端口",
+        .detail =
+        \\用途:  在沙箱内读 /proc/net/tcp*，列出真实 LISTEN 端口、绑定地址、可否外部访问，
+        \\       以及对应的网关访问 URL。
+        \\用法:  cube-cli ports <sandboxID>
+        \\参数:  <sandboxID>  位置参数，必填。
+        \\示例:  cube-cli ports $SID
+        \\注意:  模板声明的 exposedPorts 未必等于实际监听（创建时传了也可能被忽略），
+        \\       真正决定可达性的是绑定地址：0.0.0.0 / :: 可连，127.0.0.1 / ::1 只有沙箱内部能连。
+        ,
+    },
+
+    .{
+        .name = "pause",
+        .group = 1,
+        .brief = "暂停沙箱（挂起快照，0 成本）",
+        .detail =
+        \\用途:  POST /sandboxes/<id>/pause，挂起成快照，磁盘态冻结、不计 CPU/内存。
+        \\用法:  cube-cli pause <sandboxID> [--wait] [--timeout=秒]
+        \\参数:  --wait      轮询沙箱状态直到进入 paused（默认上限 30 秒）。
+        \\       --timeout=  --wait 的上限秒数（默认 30）。
+        \\示例:  cube-cli pause $SID
+        \\       cube-cli pause $SID --wait
+        \\注意:  恢复用 `cube-cli resume <sandboxID>`。
+        ,
+    },
+    .{
+        .name = "resume",
+        .group = 1,
+        .brief = "恢复暂停的沙箱",
+        .detail =
+        \\用途:  POST /sandboxes/<id>/resume。
+        \\用法:  cube-cli resume <sandboxID> [--timeout=<秒>]
+        \\参数:  --timeout=   恢复后的新时间窗（秒）；不传则平台沿用原值。
+        \\示例:  cube-cli resume $SID --timeout=1800
+        ,
+    },
+    .{
+        .name = "timeout",
+        .group = 1,
+        .brief = "设置空闲回收超时",
+        .detail =
+        \\用途:  POST /sandboxes/<id>/timeout，改空闲回收时间。
+        \\用法:  cube-cli timeout <sandboxID> <秒>      （等号写法：--timeout=<秒>）
+        \\参数:  <秒>        位置参数或 --timeout=，必填；-1 表示永不回收。
+        \\示例:  cube-cli timeout $SID 7200
+        \\       cube-cli timeout $SID --timeout=7200
+        \\       cube-cli timeout $SID -1
+        ,
+    },
+    .{
+        .name = "refresh",
+        .group = 1,
+        .brief = "续期：新增一个时间窗",
+        .detail =
+        \\用途:  POST /sandboxes/<id>/refreshes，**新增**一个时间窗（不是从现在起重算）。
+        \\用法:  cube-cli refresh <sandboxID> <秒>      （等号写法：--duration=<秒>）
+        \\参数:  <秒>        位置参数或 --duration=，新增窗口长度，必填。
+        \\示例:  cube-cli refresh $SID 3600
+        \\       cube-cli refresh $SID --duration=3600
+        \\注意:  长任务跑到一半时间要到了，用 refresh 续命，别去改 timeout。
+        ,
+    },
+    .{
+        .name = "net",
+        .group = 1,
+        .brief = "更新沙箱网络策略",
+        .detail =
+        \\用途:  PUT /sandboxes/<id>/network（204 即成功）。
+        \\用法:  cube-cli net <sandboxID> [--no-internet|--internet] [--allow=域1,域2] [--deny=域1,域2]
+        \\参数:  --no-internet   allowInternetAccess=false。
+        \\       --internet      allowInternetAccess=true（与 --no-internet 互斥，别同时给）。
+        \\       --allow=        逗号分隔的出站放行域 → allowOut。
+        \\       --deny=         逗号分隔的出站拒绝域 → denyOut。
+        \\示例:  cube-cli net $SID --no-internet
+        \\       cube-cli net $SID --allow=github.com,registry.npmjs.org
+        ,
+    },
+
+    .{
+        .name = "snap",
+        .group = 2,
+        .brief = "给沙箱打快照",
+        .detail =
+        \\用途:  POST /sandboxes/<id>/snapshots，返回 snapshotID。
+        \\用法:  cube-cli snap <sandboxID> [--name=<名称>]
+        \\参数:  --name=  快照名。
+        \\示例:  cube-cli snap $SID --name=before-refactor
+        ,
+    },
+    .{
+        .name = "snap-ls",
+        .group = 2,
+        .brief = "快照列表（x-next-token 翻页）",
+        .detail =
+        \\用途:  GET /snapshots。支持按沙箱/后端过滤、分页与自动翻页。
+        \\用法:  cube-cli snap-ls [--sandbox=<sandboxID>] [--backend=xfs|s3]
+        \\                        [--limit=<每页条数>] [--next=<TOKEN>] [--all] [--json]
+        \\参数:  --sandbox=  只看某个沙箱的快照（sandboxID 查询参数）。
+        \\       --backend=  快照后端过滤（xfs | s3），透传 backend 查询参数。
+        \\       --limit=    每页条数（服务端默认 100、上限 100）。
+        \\       --next=     续页游标，取上一页输出提示里的 x-next-token 值。
+        \\       --all       自动循环翻页直到取完（表格合并打印；--json 输出合并后的数组）。
+        \\       --json      原样输出接口 JSON（不带 --all 时只输出当前页）。
+        \\表格:  快照ID / 状态 / 后端 / 来源沙箱 / 创建时间；翻页读响应头 x-next-token。
+        \\示例:  cube-cli snap-ls --sandbox=$SID
+        \\       cube-cli snap-ls --limit=10 --all
+        \\       cube-cli snap-ls --limit=10 --next=10
+        \\注意:  不带 --all 时若还有下一页，会打印「下一页: … --next=N（或加 --all 自动翻页）」。
+        ,
+    },
+    .{
+        .name = "snap-rm",
+        .group = 2,
+        .brief = "删除快照",
+        .detail =
+        \\用途:  删除一个快照。
+        \\用法:  cube-cli snap-rm <snapshotID>
+        \\参数:  <snapshotID>  位置参数，必填。
+        \\示例:  cube-cli snap-rm snap_abc123
+        \\注意:  官方没有开 /snapshots/{id} DELETE，这里走模板删除接口
+        \\       DELETE /templates/<snapshotID>。
+        ,
+    },
+    .{
+        .name = "rollback",
+        .group = 2,
+        .brief = "回滚沙箱到某个快照",
+        .detail =
+        \\用途:  POST /sandboxes/<id>/rollback，打印响应的 operationID / status。
+        \\用法:  cube-cli rollback <sandboxID> <snapshotID> [--wait] [--timeout=秒] [--json]
+        \\参数:  --wait      回滚后轮询沙箱状态到稳定态（running），默认上限 60 秒。
+        \\       --timeout=  --wait 的上限秒数（默认 60）。
+        \\       --json      原样输出响应 JSON。
+        \\示例:  cube-cli rollback $SID snap_abc123
+        \\       cube-cli rollback $SID snap_abc123 --wait
+        \\注意:  404=沙箱或快照不存在；409=生命周期互斥，稍后重试。
+        ,
+    },
+    .{
+        .name = "clone",
+        .group = 2,
+        .brief = "打快照并用它当模板批量克隆",
+        .detail =
+        \\用途:  给沙箱打快照 → 用快照当模板建 N 个新沙箱（并发受 --concurrency 控制，默认 1 串行）
+        \\       → 默认删除中间快照。任一创建失败会回滚已创建的克隆体（要么全给、要么不留孤儿）。
+        \\用法:  cube-cli clone <sandboxID> [--n=N|-n=N] [--concurrency=C] [--timeout=秒]
+        \\                        [--note=名] [--keep-snapshot] [--no-rollback-on-fail]
+        \\参数:  --n= / -n=            克隆个数，默认 1。
+        \\       --concurrency=        同时创建的并发数，默认 1（串行）；自动夹到 [1, N]。
+        \\       --timeout=            新沙箱的空闲回收秒数。
+        \\       --note=               写入克隆体 metadata.note（默认 "<agent> · clone"）。
+        \\       --keep-snapshot       保留中间快照（默认成功后删除）。
+        \\       --no-rollback-on-fail 失败时不回滚已创建的克隆体（默认回滚）。
+        \\示例:  cube-cli clone $SID -n=3
+        \\       cube-cli clone $SID --n=4 --concurrency=2 --note=探索分支
+        \\注意:  成功时逐行打印新沙箱 ID（stdout）；失败时打印原因与回滚结果，退出非 0。
+        ,
+    },
+    .{
+        .name = "vol-ls",
+        .group = 2,
+        .brief = "列出持久卷",
+        .detail =
+        \\用途:  GET /volumes。
+        \\用法:  cube-cli vol-ls [--json]
+        \\参数:  --json  原样输出接口 JSON。
+        \\表格:  卷ID / 名称。
+        \\示例:  cube-cli vol-ls
+        ,
+    },
+    .{
+        .name = "vol-new",
+        .group = 2,
+        .brief = "新建持久卷",
+        .detail =
+        \\用途:  POST /volumes。
+        \\用法:  cube-cli vol-new [<名字>] [--driver=nfs|cos|s3|...] [--show-token] [--json]
+        \\参数:  <名字>       可选；名字需匹配 ^[A-Za-z0-9_-]+$ 且 ≤128 字符；省略则服务端自动生成。
+        \\       --driver=    卷驱动/插件，如 nfs / cos / host-mount；省略用平台默认。
+        \\       --show-token 显示完整 token（默认脱敏为 ***）。
+        \\示例:  cube-cli vol-new cache-vol
+        \\       cube-cli vol-new --driver=nfs
+        \\注意:  创建返回的 token 默认脱敏；需要完整值加 --show-token。
+        ,
+    },
+    .{
+        .name = "vol-info",
+        .group = 2,
+        .brief = "查看持久卷详情",
+        .detail =
+        \\用途:  GET /volumes/<id>。
+        \\用法:  cube-cli vol-info <卷ID> [--show-token] [--json]
+        \\参数:  --show-token 显示完整 token（默认脱敏为 ***）。
+        \\       --json       原样输出接口 JSON（默认也脱敏；--show-token 后不脱敏）。
+        \\示例:  cube-cli vol-info vol_abc123
+        \\       cube-cli vol-info vol_abc123 --show-token
+        ,
+    },
+    .{
+        .name = "vol-rm",
+        .group = 2,
+        .brief = "删除持久卷",
+        .detail =
+        \\用途:  DELETE /volumes/<id>。
+        \\用法:  cube-cli vol-rm <卷ID>
+        \\参数:  <卷ID>  位置参数，必填。
+        \\示例:  cube-cli vol-rm vol_abc123
+        \\注意:  409=卷仍被沙箱挂载（refcount>0）：先销毁挂载它的沙箱，再删卷；
+        \\       404 视为已删除（幂等成功）。
+        ,
+    },
+
+    .{
+        .name = "tpl-ls",
+        .group = 3,
+        .brief = "模板列表（状态 / 别名 / jobID / lastError）",
+        .detail =
+        \\用途:  GET /templates，逐个模板取详情并推断网关端口。
+        \\用法:  cube-cli tpl-ls [--instance-type=] [--status=] [--json]
+        \\参数:  --instance-type=  按实例类型过滤（本地过滤）。
+        \\       --status=         按状态过滤（本地过滤，大小写不敏感）。
+        \\       --json            原样输出服务端 JSON；加过滤时输出过滤后的数组。
+        \\表格:  模板ID / 状态 / 别名 / jobID / lastError / 网关 / 镜像。
+        \\示例:  cube-cli tpl-ls
+        \\       cube-cli tpl-ls --status=READY
+        \\       cube-cli tpl-ls --json | python3 -m json.tool
+        ,
+    },
+    .{
+        .name = "tpl-caps",
+        .group = 3,
+        .brief = "模板能力画像（能力 + 端口 + 网关）",
+        .detail =
+        \\用途:  列出模板的能力画像。默认静态推断（亚秒级）；--probe 会建临时沙箱打真实端点。
+        \\用法:  cube-cli tpl-caps [<模板ID>] [--probe] [--prune] [--json]
+        \\参数:  <模板ID>  位置参数。配合 --probe 时只探这一个；不带位置参数则探所有
+        \\                 没有缓存的 READY 模板。
+        \\       --probe    真机探测：建临时沙箱 → 等 envd → 打 /v2/browser|computer 端点 → 销毁。
+        \\       --prune    清理 ~/.cube-cli-caps.json 里平台已不存在的模板条目。
+        \\       --json     （预留）JSON 输出。
+        \\示例:  cube-cli tpl-caps
+        \\       cube-cli tpl-caps tpl-4850162aafbb41ad97516762 --probe
+        \\注意:  --probe 每次都要建 + 毁一个沙箱（每个几十秒），不要放进 CI 循环里；
+        \\       探测结果缓存到 ~/.cube-cli-caps.json，模板重建后自动失效。
+        ,
+    },
+    .{
+        .name = "tpl-pick",
+        .group = 3,
+        .brief = "按能力挑一个模板",
+        .detail =
+        \\用途:  按能力覆盖 + 更薄者优先选一个 READY 模板并打印模板 ID。`new --need` 用同一套逻辑。
+        \\用法:  cube-cli tpl-pick [--need=<能力>[,<能力>...]]
+        \\参数:  --need=   逗号分隔的能力，如 code / browser / desktop；默认只要求基线能力。
+        \\示例:  cube-cli tpl-pick --need=browser,desktop
+        \\       cube-cli tpl-pick
+        \\注意:  没有满足的模板时打印「没有满足 --need=... 的 READY 模板」并非 0 退出。
+        ,
+    },
+    .{
+        .name = "tpl-info",
+        .group = 3,
+        .brief = "模板详情摘要",
+        .detail =
+        \\用途:  GET /templates/<id>，打印状态 / 镜像 / 创建时间 / 暴露端口 / 网关推断。
+        \\用法:  cube-cli tpl-info <模板ID> [--json]
+        \\参数:  --json  原样输出服务端 JSON。
+        \\示例:  cube-cli tpl-info tpl-4850162aafbb41ad97516762
+        ,
+    },
+    .{
+        .name = "tpl-logs",
+        .group = 3,
+        .brief = "模板构建日志",
+        .detail =
+        \\用途:  GET /templates/<templateID>/builds/<buildID>/logs。
+        \\用法:  cube-cli tpl-logs <模板ID> <buildID>
+        \\参数:  两个位置参数，均必填。
+        \\示例:  cube-cli tpl-logs tpl-4850162aafbb41ad97516762 bld_abc123
+        ,
+    },
+    .{
+        .name = "tpl-rm",
+        .group = 3,
+        .brief = "删除模板/快照",
+        .detail =
+        \\用途:  DELETE /templates/<id>。模板与快照共用这个端点（快照删除会返回 x-operation-id 响应头）。
+        \\用法:  cube-cli tpl-rm <模板ID|快照ID> [--sync] [--instance-type=]
+        \\参数:  --sync           等待服务端删除完成（sync=true）。
+        \\       --instance-type= 实例类型过滤（instance_type 查询参数）。
+        \\示例:  cube-cli tpl-rm tpl-4850162aafbb41ad97516762
+        \\       cube-cli tpl-rm snap_abc123
+        \\注意:  不可恢复；404 视为已删除（幂等成功）。
+        ,
+    },
+    .{
+        .name = "tpl-rebuild",
+        .group = 3,
+        .brief = "重建模板",
+        .detail =
+        \\用途:  POST /templates/<id>（202 受理），返回构建任务 jobID/status/phase/progress。
+        \\用法:  cube-cli tpl-rebuild <模板ID> [--wait] [--timeout=秒] [--json]
+        \\参数:  --wait      轮询构建状态到终态（ready=成功 / failed=失败），默认上限 900 秒。
+        \\       --timeout=  --wait 的上限秒数（默认 900）。
+        \\       --json      原样输出响应 JSON（--wait 结束时再输出一行终态 JSON）。
+        \\示例:  cube-cli tpl-rebuild tpl-4850162aafbb41ad97516762
+        \\       cube-cli tpl-rebuild tpl-4850162aafbb41ad97516762 --wait
+        ,
+    },
+    .{
+        .name = "tpl-build-status",
+        .group = 3,
+        .brief = "模板构建状态",
+        .detail =
+        \\用途:  GET /templates/<id>/builds/<bid>/status，打印 状态 / 进度 / 消息。
+        \\用法:  cube-cli tpl-build-status <模板ID> <buildID> [--wait] [--timeout=秒] [--json]
+        \\参数:  --wait      轮询到终态（ready=成功 / failed=失败），默认上限 900 秒。
+        \\       --timeout=  --wait 的上限秒数（默认 900）。
+        \\       --json      原样输出接口 JSON。
+        \\示例:  cube-cli tpl-build-status tpl-4850162aafbb41ad97516762 286dc111-d249-4f6f-aa55-0d3cee623879
+        \\       cube-cli tpl-build-status tpl-xxx build-xxx --wait
+        ,
+    },
+    .{
+        .name = "tpl-alias",
+        .group = 3,
+        .brief = "设置/清除模板别名",
+        .detail =
+        \\用途:  PUT /templates/<id>/alias，body {"alias":"..."}。
+        \\用法:  cube-cli tpl-alias <模板ID> [<别名>] [--json]
+        \\参数:  <别名>  省略或给空串 = 清除别名（alias:""）；给出则设置。
+        \\       --json  原样输出接口 JSON。
+        \\示例:  cube-cli tpl-alias tpl-4850162aafbb41ad97516762 my-aio
+        \\       cube-cli tpl-alias tpl-4850162aafbb41ad97516762        # 清除别名
+        \\注意:  别名需匹配 ^[a-z0-9][a-z0-9-]{0,63}$ 且不能以 tpl-/snap- 开头；
+        \\       400=别名非法或目标不支持（快照不能设别名）；409=模板未就绪/并发占用，可重试。
+        ,
+    },
+    .{
+        .name = "tpl-resolve",
+        .group = 3,
+        .brief = "别名解析",
+        .detail =
+        \\用途:  GET /templates/aliases/<alias>，打印 templateID。
+        \\用法:  cube-cli tpl-resolve <别名> [--json]
+        \\参数:  --json  原样输出接口 JSON。
+        \\示例:  cube-cli tpl-resolve my-aio
+        \\注意:  404=别名不存在。`new --template=<别名>` 会先走这个接口。
+        ,
+    },
+    .{
+        .name = "tpl-from-image",
+        .group = 3,
+        .brief = "从 OCI 镜像推导模板默认值",
+        .detail =
+        \\用途:  读镜像标签 io.cubesandbox.template.*（无端口标签时回退 Config.ExposedPorts），
+        \\       推导出一份建模板请求体；可只打印、可输出 curl、可直接提交并等构建终态。
+        \\用法:  cube-cli tpl-from-image <镜像引用> [--alias=<别名>] [--name=<名称>] [--cpu=<核>] [--memory=<MiB>]
+        \\                       [--writable=<大小>] [--env=K=V,...] [--platform=linux/amd64]
+        \\                       [--instance-type=] [--network-type=] [--allow-out=] [--deny-out=]
+        \\                       [--dns=] [--node=] [--cmd=] [--args=] [--no-internet] [--ivshmem] [--no-cube-ca]
+        \\                       [--registry-user=<u>] [--registry-pass=<p>] [--json|--curl|--create [--no-wait]]
+        \\参数:  <镜像引用>      如 ghcr.io/org/img:tag（位置参数，必填）。
+        \\       --json          只输出请求体 JSON。
+        \\       --curl          输出可直接执行的 curl 命令。
+        \\       --create        直接 POST 提交到平台；**默认 --wait** 轮询构建到终态（--no-wait 关闭）。
+        \\       --alias=        模板别名（写 alias 字段）；--name= 写 name 字段。二者不同，别混用。
+        \\       --cpu= / --memory= / --writable= / --env=K=V,.. 覆盖推导值。
+        \\       --instance-type= / --network-type=  实例类型 / 网络模式（如 tap）。
+        \\       --allow-out= / --deny-out=  出站 CIDR 白/黑名单（逗号分隔）。
+        \\       --dns=          容器 DNS（逗号分隔）。
+        \\       --node=         限定分发节点（nodes，逗号分隔）。
+        \\       --cmd= / --args= 覆盖容器 ENTRYPOINT / CMD（逗号分隔）。
+        \\       --no-internet   allowInternetAccess=false。
+        \\       --ivshmem       建模板快照时启用 ivshmem（enableIvshmem=true）。
+        \\       --no-cube-ca    不把 CubeEgress 根证书烤进模板 rootfs（with_cube_ca=false）。
+        \\       --timeout=      --create 等待的上限秒数（默认 1800）。
+        \\示例:  cube-cli tpl-from-image ghcr.io/otaku-say/cubesandbox-image/agent-infra/sandbox:aio-code
+        \\       cube-cli tpl-from-image myreg.io/app:v1 --json --platform=linux/arm64
+        \\       cube-cli tpl-from-image ghcr.io/org/img:latest --alias=my-app --create
+        \\注意:  只需 registry 匿名读权限；私有镜像用 --registry-user/--registry-pass。
+        \\       镜像没声明可写层大小时会按 12G 估计并给 ⚠️ 提示（--writable= 可覆盖）。
+        ,
+    },
+
+    .{
+        .name = "cat",
+        .alias = "read",
+        .group = 4,
+        .brief = "读沙箱内文件到标准输出",
+        .detail =
+        \\用途:  GET /files?path=<p>，把文件内容原样打到 stdout。
+        \\用法:  cube-cli cat <sandboxID> <远端路径> [--user=<用户>]
+        \\       （`cube-cli read ...` 是同义词）
+        \\参数:  --user=   以指定用户身份读（透传给 envd）。
+        \\示例:  cube-cli cat $SID /etc/hostname
+        \\       cube-cli cat $SID /tmp/data.csv > data.csv
+        ,
+    },
+    .{
+        .name = "write",
+        .group = 4,
+        .brief = "把本地文件（或 stdin）写进沙箱",
+        .detail =
+        \\用途:  POST /files?path=<p>，body 为内容。
+        \\用法:  cube-cli write <sandboxID> <本地文件|-> <远端路径> [--user=<用户>]
+        \\参数:  <本地文件|->  位置参数；`-` 表示从 stdin 读（上限 8 MiB）。
+        \\示例:  cube-cli write $SID ./data.csv /home/gem/data.csv
+        \\       echo hi | cube-cli write $SID - /tmp/hi.txt
+        \\注意:  整体覆盖写，不支持追加；大文件（> 8 MiB）请用 aiod-cli 的 put/fs-tree-put。
+        ,
+    },
+    .{
+        .name = "get",
+        .group = 4,
+        .brief = "把沙箱内文件下载到本地（二进制安全）",
+        .detail =
+        \\用途:  读远端文件并写到本地路径。
+        \\用法:  cube-cli get <sandboxID> <远端路径> <本地文件> [--user=<用户>]
+        \\参数:  --user=   以指定用户身份读。
+        \\示例:  cube-cli get $SID /home/gem/out.tar.gz ./out.tar.gz
+        \\注意:  目标已存在会直接覆盖。
+        ,
+    },
+    .{
+        .name = "ls-file",
+        .group = 4,
+        .brief = "列沙箱内目录",
+        .detail =
+        \\用途:  Filesystem.ListDir。
+        \\用法:  cube-cli ls-file <sandboxID> [远端路径] [--user=<用户>]
+        \\参数:  [远端路径]  位置参数，缺省为 /。
+        \\示例:  cube-cli ls-file $SID /home/gem
+        ,
+    },
+    .{
+        .name = "stat",
+        .group = 4,
+        .brief = "看沙箱内文件/目录元信息",
+        .detail =
+        \\用途:  Filesystem.Stat，输出服务端原始 JSON。
+        \\用法:  cube-cli stat <sandboxID> <远端路径> [--user=<用户>]
+        \\示例:  cube-cli stat $SID /tmp
+        ,
+    },
+    .{
+        .name = "mkdir",
+        .group = 4,
+        .brief = "在沙箱内建目录",
+        .detail =
+        \\用途:  Filesystem.MakeDir。**不递归**。
+        \\用法:  cube-cli mkdir <sandboxID> <远端路径> [--user=<用户>]
+        \\示例:  cube-cli mkdir $SID /tmp/out
+        \\注意:  父目录不存在会失败；递归创建请用 `cube-cli exec $SID 'mkdir -p ...'`。
+        ,
+    },
+    .{
+        .name = "rm-file",
+        .group = 4,
+        .brief = "删除沙箱内文件/目录",
+        .detail =
+        \\用途:  Filesystem.Remove。
+        \\用法:  cube-cli rm-file <sandboxID> <远端路径> [--user=<用户>]
+        \\示例:  cube-cli rm-file $SID /tmp/out
+        \\注意:  非空目录能否删取决于服务端实现；需要递归时用 exec 跑 rm -rf。
+        ,
+    },
+    .{
+        .name = "mv",
+        .group = 4,
+        .brief = "移动/改名沙箱内文件",
+        .detail =
+        \\用途:  Filesystem.Move。
+        \\用法:  cube-cli mv <sandboxID> <源> <目标> [--user=<用户>]
+        \\示例:  cube-cli mv $SID /tmp/a.txt /tmp/b.txt
+        ,
+    },
+    .{
+        .name = "exists",
+        .group = 4,
+        .brief = "判断沙箱内路径是否存在（true/false）",
+        .detail =
+        \\用途:  Filesystem.Stat 的布尔封装（对齐 SDK files.exists）。
+        \\用法:  cube-cli exists <sandboxID> <远端路径> [--user=<用户>]
+        \\输出:  存在 → true（退出码 0）；不存在 → false（退出码 1，便于脚本判断）。
+        \\示例:  cube-cli exists $SID /etc/hostname && echo ok
+        ,
+    },
+    .{
+        .name = "write-files",
+        .alias = "write_files",
+        .group = 4,
+        .brief = "批量写多个文件（远端:本地 清单 / JSON 清单）",
+        .detail =
+        \\用途:  对齐 SDK files.write_files：顺序写、遇错即停（报告已写数量 / 失败项）。
+        \\用法:  cube-cli write-files <sandboxID> --files=远端:本地[,远端:本地...] [--manifest=清单.json] [--user=<用户>]
+        \\参数:  --files=     逗号分隔的 `远端路径:本地文件` 列表（可重复给）。
+        \\       --manifest=  JSON 清单文件：数组 [{"path":"/远端","local":"./本地"}] 或
+        \\                   对象 {"远端":"本地"}。
+        \\示例:  cube-cli write-files $SID --files=/tmp/a.txt:./a.txt,/tmp/b.txt:./b.txt
+        \\       cube-cli write-files $SID --manifest=files.json
+        \\注意:  单文件上限 8 MiB（同 write）；文件较大请用 aiod-cli 的 put。
+        ,
+    },
+    .{
+        .name = "watch-dir",
+        .alias = "watch_dir",
+        .group = 4,
+        .brief = "观察沙箱内目录变更流（限时）",
+        .detail =
+        \\用途:  envd Filesystem.WatchDir 流：观察目录里文件的新建 / 修改 / 删除 / 改名。
+        \\用法:  cube-cli watch-dir <sandboxID> <远端目录> [--timeout=秒] [--json] [--user=<用户>]
+        \\参数:  --timeout=  观察秒数（默认 10；超时由服务端 Connect-Timeout-Ms 控制）。
+        \\       --json     每个事件输出原始 JSON（否则表格化：类型 + 文件名）。
+        \\示例:  cube-cli watch-dir $SID /tmp --timeout=30
+        \\注意:  只在监听的这段时间里收事件（不是常驻守护）；继续观察请重跑。
+        ,
+    },
+
+    .{
+        .name = "health",
+        .group = 5,
+        .brief = "控制面健康检查",
+        .detail =
+        \\用途:  GET /health，原样打印响应体。
+        \\用法:  cube-cli health
+        \\参数:  无。
+        \\示例:  cube-cli health
+        \\注意:  需要 CUBESANDBOX_API_URL。
+        ,
+    },
+    .{
+        .name = "version",
+        .group = 5,
+        .brief = "版本 / 构建信息",
+        .detail =
+        \\用途:  打印版本号、仓库地址与构建目标。
+        \\用法:  cube-cli version        （等号写法：`cube-cli --version`）
+        \\参数:  无。
+        \\示例:  cube-cli version
+        ,
+    },
+    .{
+        .name = "help",
+        .group = 5,
+        .brief = "帮助：默认速查表 / all 完整表 / <命令> 详情",
+        .detail =
+        \\用途:  打印帮助，**永不触发任何真实操作**。
+        \\用法:  cube-cli help              分组速查（常用命令）
+        \\       cube-cli help all          完整命令表（一条一行）
+        \\       cube-cli help <命令>       单命令详解（用法 / 参数 / 示例 / 注意）
+        \\       cube-cli --help / -h      等价于 `cube-cli help`
+        \\       cube-cli <命令> --help     等价于 `cube-cli help <命令>`
+        \\       cube-cli <命令> -h         同上
+        \\示例:  cube-cli help new
+        \\       cube-cli tpl-caps --help
+        \\注意:  未知命令会打印「未知命令：xxx」并以非 0 退出。
+        ,
+    },
+    .{
+        .name = "info",
+        .group = 0,
+        .brief = "沙箱详情（规格 / 元数据 / 卷挂载 / 截止时间）",
+        .detail =
+        \\用途:  查看单个沙箱完整状态：state、CPU/内存/磁盘、起止时间、metadata、volumeMounts、domain。
+        \\用法:  cube-cli info <sandboxID> [--json] [--wait=<状态>] [--timeout=<秒>]
+        \\                     [--host[=端口]] [--mcp-url] [--mcp-token]
+        \\参数:  --json 原样输出；--wait= 轮询到指定状态（如 running）；--timeout= 最大等待秒数。
+        \\       --host[=端口]  打印 domain 与 SDK get_host(端口) 的虚拟域名（排障对照上游文档）：
+        \\                      `--host` 打印 domain + envd 的 49983 虚拟域名；`--host=49999` 只打印
+        \\                      `<端口>-<沙箱ID>.<域名>`。本部署无该域名解析，数据面走 proxy 路径路由。
+        \\       --mcp-url      打印 MCP 网关流式 HTTP 端点（同 SDK get_mcp_url()）。
+        \\       --mcp-token    读取沙箱内 MCP 网关鉴权令牌（同 SDK get_mcp_token()）。
+        \\示例:  cube-cli info 6f1a... --json
+        \\       cube-cli info 6f1a... --host=49999
+        \\注意:  上游详情不含网络策略（改策略用 net 命令）。
+        ,
+    },
+    .{
+        .name = "connect",
+        .group = 1,
+        .brief = "连接/续期（官方推荐，替代 deprecated 的 resume）",
+        .detail =
+        \\用途:  把沙箱唤醒并保证「至少还剩 N 秒」（不会缩短已有的更长截止）。
+        \\用法:  cube-cli connect <sandboxID> [--timeout=<秒>] [--json]
+        \\参数:  --timeout= 剩余时间下限（秒）；缺省用平台默认。
+        \\示例:  cube-cli connect 6f1a... --timeout=3600
+        \\注意:  与 resume 语义不同：resume=「从现在起开 N 秒新窗口」；connect=「保证至少剩 N 秒」。
+        ,
+    },
+    .{
+        .name = "logs",
+        .group = 5,
+        .brief = "沙箱日志（启动 / 运行；排障首选）",
+        .detail =
+        \\用途:  读沙箱生命周期日志（建沙箱、启动 VM、恢复快照等）。
+        \\用法:  cube-cli logs <sandboxID> [--tail=<N>] [--start=<游标>] [--limit=<N>] [--v2]
+        \\                      [--cursor=<游标>] [--direction=forward|backward] [--level=info|warn|error] [--json]
+        \\参数:  --tail= 只显示最后 N 行；--v2 走结构化日志接口（level/message/fields）。
+        \\示例:  cube-cli logs 6f1a... --tail=50
+        ,
+    },
+    .{
+        .name = "raw",
+        .group = 5,
+        .brief = "任意控制面 API 透传（未覆盖端点的兜底）",
+        .detail =
+        \\用途:  直接对控制面发任意请求，复用同一套鉴权 / 解压 / 状态码处理；上游新端点无需等 CLI 更新。
+        \\用法:  cube-cli raw <METHOD> <path> [--body=<JSON|@文件|->] [--query=k=v,…] [--header=k:v] [--json]
+        \\参数:  --body= JSON 字符串、@文件名 或 - (stdin)；不带体时 GET/DELETE 无体、POST/PUT 发 {}。
+        \\示例:  cube-cli raw GET /health
+        \\       cube-cli raw POST /sandboxes --body='{"templateID":"tpl-..."}'
+        \\注意:  非 2xx 打印状态码与响应体，并以非 0 退出。
+        ,
+    },
+
+    // ---- 进程 / PTY（第二批 SDK 对齐：envd process.Process 服务的 CLI 原语）----
+    .{
+        .name = "exec-async",
+        .group = 6,
+        .brief = "后台启动命令（读到 pid 即返回，进程继续跑）",
+        .detail =
+        \\用途:  走 envd process.Process/Start 启动一条命令，收到 start 事件里的 pid 就断开，
+        \\       命令在沙箱里继续运行；stdout/stderr 落盘到 /tmp/.cube-cli-exec/<tag>.{out,err}。
+        \\用法:  cube-cli exec-async <sandboxID> <命令...> [--cwd=] [--env=NAME|K=V] [--user=] [--timeout=秒] [--no-stdin]
+        \\参数:  <命令...>   位置参数空格拼接为一条命令（交 /bin/bash -l -c 执行）。
+        \\       --cwd=      工作目录；--env= 同 exec（K=V 或从本机环境读）。
+        \\       --user=     执行身份（envd Basic 用户作用域，默认 root）。
+        \\       --timeout=  给命令套 `timeout -k 5 <秒>`，到点自动结束。
+        \\       --no-stdin  启动时不打开 stdin（默认打开，配合 exec-stdin 送输入）。
+        \\示例:  cube-cli exec-async $SID 'pip install -r req.txt -q; echo done'
+        \\       → 打印 pid 与日志路径；随后 exec-logs / exec-kill / exec-stdin 对 pid 操作。
+        \\注意:  envd 断开后进程继续运行（实测）；输出无缓冲，靠本命令的落盘包装实现可回读。
+        ,
+    },
+    .{
+        .name = "exec-logs",
+        .group = 6,
+        .brief = "增量拉取异步进程的输出",
+        .detail =
+        \\用途:  读 exec-async 进程的输出文件（按字节偏移增量拉取），进程结束后给出退出码。
+        \\用法:  cube-cli exec-logs <sandboxID> <pid> [--mode=stdout|stderr|both] [--offset=N] [--limit=N] [--follow]
+        \\参数:  --offset=N  从第 N 字节开始读（默认 0；上次输出末尾会提示下一偏移）。
+        \\       --limit=N   本次最多读 N 字节（默认不限）。
+        \\       --mode=     只看 stdout / stderr 或两者（both 默认，stderr 段带 --- stderr --- 分隔）。
+        \\       --follow    每 0.7 秒拉一次新内容，直到进程退出（或信号终止）为止。
+        \\示例:  cube-cli exec-logs $SID 123 --follow
+        \\       cube-cli exec-logs $SID 123 --offset=4096 --limit=65536
+        \\注意:  必须由 exec-async 启动的 pid（元信息 /tmp/.cube-cli-exec/<pid>.meta）。
+        ,
+    },
+    .{
+        .name = "exec-kill",
+        .group = 6,
+        .brief = "给异步进程发信号（默认 SIGKILL）",
+        .detail =
+        \\用途:  envd process.Process/SendSignal。
+        \\用法:  cube-cli exec-kill <sandboxID> <pid> [--sigterm]
+        \\参数:  --sigterm  用 SIGTERM 代替默认的 SIGKILL。
+        \\示例:  cube-cli exec-kill $SID 123
+        \\注意:  进程不存在时提示「已不存在」并正常退出（幂等）。
+        ,
+    },
+    .{
+        .name = "exec-stdin",
+        .group = 6,
+        .brief = "给异步进程送 stdin 输入",
+        .detail =
+        \\用途:  envd process.Process/SendInput（input.stdin）。
+        \\用法:  cube-cli exec-stdin <sandboxID> <pid> <数据...>   （`-` = 从本机 stdin 读原始字节）
+        \\示例:  cube-cli exec-stdin $SID 123 'hello'          # 无换行
+        \\       printf 'line1\n' | cube-cli exec-stdin $SID 123 -
+        \\注意:  仅对以 stdin 打开启动的进程有效（exec-async 默认打开；--no-stdin 的会报
+        \\       "stdin not enabled or closed"）。
+        ,
+    },
+    .{
+        .name = "pty-open",
+        .group = 6,
+        .brief = "开一个持久 PTY 会话（script 记录全过程）",
+        .detail =
+        \\用途:  在 PTY 里跑 `<shell> -i -l`，并用 script(1) 把整个会话记录到
+        \\       /tmp/.cube-cli-pty/<tag>.log；返回 pid 后会话常驻（断开不影响）。
+        \\用法:  cube-cli pty-open <sandboxID> [--rows=24] [--cols=80] [--shell=/bin/bash] [--cwd=] [--env=NAME|K=V] [--user=]
+        \\参数:  --rows= / --cols=  PTY 窗口大小（pty-resize 可再调）。
+        \\       --shell=  交互 shell（默认 /bin/bash）。
+        \\示例:  cube-cli pty-open $SID          # → pid 123、日志路径
+        \\       cube-cli pty-write $SID 123 'ls -la' --enter && cube-cli pty-read $SID 123 --follow
+        \\注意:  依赖镜像内 /usr/bin/script（util-linux）；缺失时会话立即退出、日志为空。
+        ,
+    },
+    .{
+        .name = "pty-write",
+        .group = 6,
+        .brief = "向 PTY 会话送输入（SendInput pty）",
+        .detail =
+        \\用法:  cube-cli pty-write <sandboxID> <pid> <数据...> [--enter]
+        \\参数:  `-` 表示从本机 stdin 读原始字节（可送控制字符，如 Ctrl-C = \x03）。
+        \\       --enter 在数据末尾补一个回车（\r），方便直接执行命令。
+        \\示例:  cube-cli pty-write $SID 123 'echo hi' --enter
+        ,
+    },
+    .{
+        .name = "pty-read",
+        .group = 6,
+        .brief = "读 PTY 会话记录（按偏移增量）",
+        .detail =
+        \\用法:  cube-cli pty-read <sandboxID> <pid> [--offset=N] [--limit=N] [--lines=N] [--follow] [--raw]
+        \\参数:  --offset= 从第 N 字节开始（默认 0，即到目前全部内容）。
+        \\       --lines=N 只看最后 N 行（tail 语义）。
+        \\       --follow  持续跟随到会话结束。
+        \\       --raw     保留 script(1) 的 "Script started on ..." 头（默认过滤）。
+        \\示例:  cube-cli pty-read $SID 123 --lines=40
+        \\       cube-cli pty-read $SID 123 --follow     # 相当于远程 tail -f
+        \\注意:  输出是原始终端字节（含 ANSI 转义）。
+        ,
+    },
+    .{
+        .name = "pty-close",
+        .group = 6,
+        .brief = "结束 PTY 会话",
+        .detail =
+        \\用法:  cube-cli pty-close <sandboxID> <pid> [--sigterm]
+        \\参数:  --sigterm  用 SIGTERM 代替默认的 SIGKILL。
+        \\示例:  cube-cli pty-close $SID 123
+        \\注意:  会话记录文件保留在 /tmp/.cube-cli-pty/ 下。
+        ,
+    },
+    .{
+        .name = "pty-resize",
+        .group = 6,
+        .brief = "调整 PTY 窗口大小",
+        .detail =
+        \\用途:  envd process.Process/Update（pty.size）。
+        \\用法:  cube-cli pty-resize <sandboxID> <pid> [--rows=24] [--cols=80]
+        \\示例:  cube-cli pty-resize $SID 123 --rows=40 --cols=120
+        ,
+    },
+    // ---------------- MCP（Agent 接口） ----------------
+    .{
+        .name = "mcp-server",
+        .group = 5,
+        .brief = "以 MCP Server（stdio）方式运行（Agent 接口）",
+        .detail =
+        \\用途:  把本 CLI 的能力以 MCP（Model Context Protocol）stdio 服务暴露给 Agent：
+        \\       stdin 读 JSON-RPC 2.0 请求，stdout 只写协议消息（绝对无 banner/日志）。
+        \\用法:  cube-cli mcp-server [--api-url=<URL>] [--key=<KEY>] [--proxy=<URL>] [--verbose]
+        \\参数:  --api-url= / --key= / --proxy=  覆盖对应的 CUBESANDBOX_* 环境变量。
+        \\       --verbose  诊断信息打到 stderr（stdout 永远只有协议消息）。
+        \\方法:  initialize / notifications/initialized / ping / tools/list / tools/call。
+        \\示例:  MCP Client 配置（Claude Desktop / Cursor）：
+        \\       {"command":"cube-cli","args":["mcp-server"],"env":{"CUBESANDBOX_API_URL":"...","CUBESANDBOX_API_KEY":"..."}}
+        \\注意:  服务模式下缺配置不会退出，工具调用时返回可读错误；--help 不受纯净约束。
+        ,
+    },
+};
+
+pub fn isHelpArg(a: []const u8) bool {
+    return std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-?") or
+        std.mem.eql(u8, a, "help");
+}
+
+pub fn isHelpCmd(a: []const u8) bool {
+    return std.mem.eql(u8, a, "help") or std.mem.eql(u8, a, "--help") or
+        std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "-?");
+}
+
+pub fn find(name: []const u8) ?*const Entry {
+    for (&table) |*e| {
+        if (std.mem.eql(u8, e.name, name)) return e;
+        if (e.alias.len > 0 and std.mem.eql(u8, e.alias, name)) return e;
+    }
+    return null;
+}
+
+/// 猜一个名字（用于「你是不是想找」提示）：返回前缀/包含匹配的第一个命令名。
+fn suggest(name: []const u8) ?[]const u8 {
+    var best: ?[]const u8 = null;
+    var best_n: usize = 4;
+    for (&table) |*e| {
+        var n: usize = 0;
+        const a = e.name;
+        const m = @min(name.len, a.len);
+        while (n < m and name[n] == a[n]) n += 1;
+        if (n >= 3 and n < best_n) {
+            best_n = n;
+            best = a;
+        }
+    }
+    return best;
+}
+
+const banner =
+    \\所有取值型 flag 一律用等号写法：--key=value（例：--need=code）；布尔开关直接写 --flag。
+    \\
+;
+
+pub fn printVersion(out: *std.Io.Writer) !void {
+    try out.print(
+        \\{s} (zig) {s}
+        \\仓库: {s}
+        \\文档: {s}
+        \\构建: Zig 0.17.0 · musl 静态单文件 · ReleaseFast + strip
+        \\构建命令: zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux-musl
+        \\产物名: aarch64-linux-musl → cube-cli-linux-arm64 ；x86_64-linux-musl → cube-cli-linux-amd64
+        \\
+    , .{ tool, cfg.version, repo, docs });
+}
+
+pub fn printTop(out: *std.Io.Writer) !void {
+    try out.print(
+        \\{s} (zig) {s} —— CubeSandbox 控制面 CLI（建沙箱 / 选模板 / 快照 / 卷 / 沙箱内文件）
+        \\仓库 {s} ｜ 逐条文档 {s}
+        \\
+        \\用法: {s} <命令> [位置参数…] [--key=value]
+        \\
+    , .{ tool, cfg.version, repo, docs, tool });
+    try out.writeAll(banner);
+    try out.print(
+        \\本帮助即**权威命令面**：命令表在 src/help.zig，与 docs/cube-cli.md 同步更新、随代码走。
+        \\
+        \\【沙箱】
+        \\  new      建沙箱（默认 aio-code 镜像）  --need= --template= --timeout= --note= --agent= --task=
+        \\  ls       列出沙箱（ID / 模板 / 状态 / 备注）
+        \\  info     沙箱详情（规格/元数据/卷/截止时间）  --json --wait=
+        \\  rm       销毁沙箱 <sandboxID>
+        \\  exec     在沙箱内执行命令            --cwd= --env= --timeout=
+        \\  code     用解释器跑一段代码            --lang=python|js|bash --timeout= --env=
+        \\  ports    实测沙箱内实际监听的端口
+        \\
+        \\【生命周期】
+        \\  pause    暂停（挂起快照，0 成本）        --wait --timeout=
+        \\  resume/connect  恢复 / 连接续期（官方推荐）    --timeout=
+        \\  timeout/refresh  设空闲超时 / 续期   <sid> <秒>（-1=永不回收；--duration=秒）
+        \\  net      改网络策略                  --no-internet --allow=域,域 --deny=域,域
+        \\【快照 / 卷】
+        \\  snap      打快照 <sid>                --name=
+        \\  snap-ls   快照列表                    --sandbox= --backend= --limit= --next= --all --json
+        \\  snap-rm   删快照 <snapshotID>
+        \\  rollback  回滚到快照 <sid> <snapshotID>   --wait --timeout= --json
+        \\  clone     快照当模板批量克隆 <sid>     --n= --concurrency= --timeout= --note= --keep-snapshot
+        \\  vol-ls / vol-new [名字] / vol-info <卷ID> / vol-rm <卷ID>   持久卷（vol-new --driver=）
+        \\【模板】
+        \\  tpl-ls           模板列表（状态/别名/jobID/lastError）  --instance-type= --status= --json
+        \\  tpl-caps / tpl-pick  能力画像 / 按能力选模板   --probe --prune --json ｜ --need=…
+        \\  tpl-info         模板详情               --json
+        \\  tpl-logs / tpl-build-status   构建日志 / 状态 <模板ID> <buildID>
+        \\  tpl-rm / tpl-rebuild   删除模板·快照 / 重建 <模板ID>  --sync --wait --json
+        \\  tpl-alias / tpl-resolve   别名设置 / 解析 <模板ID> [别名]
+        \\  tpl-from-image   从 OCI 镜像推导模板默认值  --alias= --name= --json --curl --create …
+        \\
+        \\【文件】（<sid> 之后的操作都走沙箱内 envd）
+        \\  cat|read  读文件      <sid> <路径>              --user=
+        \\  write | get   本地↔远端   <sid> <本地> <远端> ｜ <sid> <远端> <本地>   --user=
+        \\  ls-file   列目录      <sid> [路径]              --user=
+        \\  stat / mkdir / rm-file / mv   <sid> <路径…>      --user=
+        \\  exists / write-files / watch-dir   存在性 / 批量写 / 目录变更流
+        \\
+        \\【进程 / PTY】
+        \\  exec-async/logs/kill/stdin ｜ pty-open/write/read/close|resize   异步执行族 / 持久 PTY <sid> [<pid>]
+        \\
+        \\【诊断 / 其它】
+        \\  health / version   控制面健康检查 / 版本信息
+        \\  logs / raw   沙箱日志 / 任意 API 透传   <sid> --tail=N ｜ <METHOD> <path>
+        \\  help [命令|all]   帮助；all = 完整命令表
+        \\
+        \\单命令帮助（三种写法等价，**只打印不执行**）：
+        \\  {s} help new   ｜   {s} new --help   ｜   {s} new -h
+        \\
+        \\环境变量（仓库内不含任何部署信息）:
+        \\  CUBESANDBOX_API_URL    控制面地址（必填）
+        \\  CUBESANDBOX_API_KEY    控制面 API Key（本部署可不设）
+        \\  CUBESANDBOX_PROXY_URL  数据面网关（exec / 文件 / ports 需要）
+        \\  CUBESANDBOX_AGENT_NAME  默认写入新沙箱 metadata.agent 的名字
+        \\
+    , .{ tool, tool, tool });
+}
+
+pub fn printAll(out: *std.Io.Writer) !void {
+    try out.print(
+        \\{s} (zig) {s} —— 完整命令表（一条一行；仓库 {s} ｜ 文档 {s}）
+        \\
+        \\用法: {s} <命令> [位置参数…] [--key=value]
+        \\
+    , .{ tool, cfg.version, repo, docs, tool });
+    try out.writeAll(banner);
+    for (groups, 0..) |g, gi| {
+        try out.print("\n【{s}】\n", .{g});
+        for (&table) |*e| {
+            if (e.group != gi) continue;
+            const nm = if (e.alias.len > 0)
+                try std.fmt.allocPrint(std.heap.smp_allocator, "{s}|{s}", .{ e.name, e.alias })
+            else
+                e.name;
+            try out.print("  {s:<22} {s}\n", .{ nm, e.brief });
+        }
+    }
+    try out.print(
+        \\
+        \\单命令详情: {s} help <命令> ｜ {s} <命令> --help ｜ {s} <命令> -h
+        \\共 {d} 条命令。
+        \\
+    , .{ tool, tool, tool, table.len });
+}
+
+pub fn printOne(out: *std.Io.Writer, e: *const Entry) !void {
+    try out.print("{s} {s} —— {s}\n", .{ tool, e.name, e.brief });
+    if (e.alias.len > 0) try out.print("（同义词: {s}）\n", .{e.alias});
+    try out.print("分组: {s}\n\n", .{groups[e.group]});
+    try out.writeAll(e.detail);
+    try out.writeAll("\n");
+}
+
+pub fn printUnknown(out: *std.Io.Writer, name: []const u8) !void {
+    try out.print("未知命令：{s}\n", .{name});
+    if (suggest(name)) |s| try out.print("你是不是想找 `{s}`？\n", .{s});
+    try out.print("用 `{s} help` 看完整命令表，`{s} help {s}` 看单条命令详解。\n", .{ tool, tool, name });
+}
