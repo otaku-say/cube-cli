@@ -32,7 +32,7 @@ jobs:
             --arg tool 'cube-cli' \
             --arg source_sha "$SOURCE_SHA" \
             --arg source_run_id "$SOURCE_RUN_ID" \
-            '{event_type:"sandbox-cli-release",client_payload:{source_repo:$source_repo,tool:$tool,source_sha:$source_sha,source_run_id:$source_run_id}}')"
+            '{event_type:"cube-cli-release",client_payload:{source_repo:$source_repo,tool:$tool,source_sha:$source_sha,source_run_id:$source_run_id}}')"
 
           curl --fail-with-body --silent --show-error --retry 3 \
             -X POST \
