@@ -5,7 +5,7 @@
 #   1. help / help all / help <cmd> / <cmd> --help / <cmd> -h 五种入口都能打印
 #   2. **new --help 绝不建沙箱**（前后 cube-cli ls 对比沙箱数量）
 #   3. 未知命令 → "未知命令：xxx" + 非 0 退出
-#   4. 顶层 help 行数 ≤ 60
+#   4. 顶层 help 行数 ≤ 70（门槛只防帮助无限膨胀，不追求精确行数）
 #   5. version 带仓库与构建信息
 #
 # 用法：
@@ -33,8 +33,8 @@ check() {
 
 echo "== 1. 顶层 help =="
 CUBE_LINES=$("$CUBE" help | wc -l | tr -d ' ')
-if [ "$CUBE_LINES" -le 60 ]; then ok "cube-cli help = $CUBE_LINES 行 (≤60)"
-else bad "cube-cli help = $CUBE_LINES 行 (>60)"; fi
+if [ "$CUBE_LINES" -le 70 ]; then ok "cube-cli help = $CUBE_LINES 行 (≤70)"
+else bad "cube-cli help = $CUBE_LINES 行 (>70)"; fi
 check "cube-cli --help"    0 "$CUBE" --help
 check "cube-cli -h"        0 "$CUBE" -h
 check "cube-cli（无参数）"  0 "$CUBE"

@@ -122,7 +122,6 @@ jobs:
       - name: 生成校验和
         run: |
           cd dist
-          rm -f build.log
           ls -la
           sha256sum * > SHA256SUMS
           cat SHA256SUMS

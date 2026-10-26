@@ -60,7 +60,7 @@ SID=$(cube-cli new --note=demo)
 ## 帮助怎么用
 
 ```bash
-cube-cli help              # 分组速查（58 行，常用命令）
+cube-cli help              # 分组速查（常用命令）
 cube-cli help all          # 完整命令表，一条一行
 cube-cli help new          # 单命令详解（本文档对应小节）
 cube-cli new --help        # 同上，**只打印不建沙箱**
@@ -88,54 +88,55 @@ cube-cli new -h            # 同上
   - [`connect`](#connect) —— 连接/续期（官方推荐，替代 deprecated 的 resume）
 - **快照 / 卷**
   - [`snap`](#snap) —— 给沙箱打快照
-  - [`snap-ls`](#snapls) —— 快照列表（x-next-token 翻页）
-  - [`snap-rm`](#snaprm) —— 删除快照
+  - [`snap-ls`](#snap-ls) —— 快照列表（x-next-token 翻页）
+  - [`snap-rm`](#snap-rm) —— 删除快照
   - [`rollback`](#rollback) —— 回滚沙箱到某个快照
   - [`clone`](#clone) —— 打快照并用它当模板批量克隆
-  - [`vol-ls`](#volls) —— 列出持久卷
-  - [`vol-new`](#volnew) —— 新建持久卷
-  - [`vol-info`](#volinfo) —— 查看持久卷详情
-  - [`vol-rm`](#volrm) —— 删除持久卷
+  - [`vol-ls`](#vol-ls) —— 列出持久卷
+  - [`vol-new`](#vol-new) —— 新建持久卷
+  - [`vol-info`](#vol-info) —— 查看持久卷详情
+  - [`vol-rm`](#vol-rm) —— 删除持久卷
 - **模板**
-  - [`tpl-ls`](#tplls) —— 模板列表（状态 / 别名 / jobID / lastError）
-  - [`tpl-caps`](#tplcaps) —— 模板能力画像（能力 + 端口 + 网关）
-  - [`tpl-pick`](#tplpick) —— 按能力挑一个模板
-  - [`tpl-info`](#tplinfo) —— 模板详情摘要
-  - [`tpl-logs`](#tpllogs) —— 模板构建日志
-  - [`tpl-rm`](#tplrm) —— 删除模板/快照
-  - [`tpl-rebuild`](#tplrebuild) —— 重建模板
-  - [`tpl-build-status`](#tplbuildstatus) —— 模板构建状态
-  - [`tpl-alias`](#tplalias) —— 设置/清除模板别名
-  - [`tpl-resolve`](#tplresolve) —— 别名解析
-  - [`tpl-from-image`](#tplfromimage) —— 从 OCI 镜像推导模板默认值
+  - [`tpl-ls`](#tpl-ls) —— 模板列表（状态 / 别名 / jobID / lastError）
+  - [`tpl-caps`](#tpl-caps) —— 模板能力画像（能力 + 端口 + 网关）
+  - [`tpl-pick`](#tpl-pick) —— 按能力挑一个模板
+  - [`tpl-info`](#tpl-info) —— 模板详情摘要
+  - [`tpl-logs`](#tpl-logs) —— 模板构建日志
+  - [`tpl-rm`](#tpl-rm) —— 删除模板/快照
+  - [`tpl-rebuild`](#tpl-rebuild) —— 重建模板
+  - [`tpl-build-status`](#tpl-build-status) —— 模板构建状态
+  - [`tpl-alias`](#tpl-alias) —— 设置/清除模板别名
+  - [`tpl-resolve`](#tpl-resolve) —— 别名解析
+  - [`tpl-from-image`](#tpl-from-image) —— 从 OCI 镜像推导模板默认值
 - **文件**
   - [`cat`](#cat) —— 读沙箱内文件到标准输出（同义词 `read`）
   - [`write`](#write) —— 把本地文件（或 stdin）写进沙箱
   - [`get`](#get) —— 把沙箱内文件下载到本地（二进制安全）
-  - [`ls-file`](#lsfile) —— 列沙箱内目录
+  - [`ls-file`](#ls-file) —— 列沙箱内目录
   - [`stat`](#stat) —— 看沙箱内文件/目录元信息
   - [`mkdir`](#mkdir) —— 在沙箱内建目录
-  - [`rm-file`](#rmfile) —— 删除沙箱内文件/目录
+  - [`rm-file`](#rm-file) —— 删除沙箱内文件/目录
   - [`mv`](#mv) —— 移动/改名沙箱内文件
   - [`exists`](#exists) —— 判断沙箱内路径是否存在（true/false）
-  - [`watch-dir`](#watchdir) —— 观察沙箱内目录变更流（限时）（同义词 `watch_dir`）
+  - [`write-files`](#write-files) —— 批量写多个文件（远端:本地 清单 / JSON 清单）（同义词 `write_files`）
+  - [`watch-dir`](#watch-dir) —— 观察沙箱内目录变更流（限时）（同义词 `watch_dir`）
 - **诊断 / 其它**
   - [`health`](#health) —— 控制面健康检查
   - [`version`](#version) —— 版本 / 构建信息
   - [`help`](#help) —— 帮助：默认速查表 / all 完整表 / <命令> 详情
   - [`logs`](#logs) —— 沙箱日志（启动 / 运行；排障首选）
   - [`raw`](#raw) —— 任意控制面 API 透传（未覆盖端点的兜底）
-  - [`mcp-server`](#mcpserver) —— 以 MCP Server（stdio）方式运行（Agent 接口）
+  - [`mcp-server`](#mcp-server) —— 以 MCP Server（stdio）方式运行（Agent 接口）
 - **进程 / PTY**
-  - [`exec-async`](#execasync) —— 后台启动命令（读到 pid 即返回，进程继续跑）
-  - [`exec-logs`](#execlogs) —— 增量拉取异步进程的输出
-  - [`exec-kill`](#execkill) —— 给异步进程发信号（默认 SIGKILL）
-  - [`exec-stdin`](#execstdin) —— 给异步进程送 stdin 输入
-  - [`pty-open`](#ptyopen) —— 开一个持久 PTY 会话（script 记录全过程）
-  - [`pty-write`](#ptywrite) —— 向 PTY 会话送输入（SendInput pty）
-  - [`pty-read`](#ptyread) —— 读 PTY 会话记录（按偏移增量）
-  - [`pty-close`](#ptyclose) —— 结束 PTY 会话
-  - [`pty-resize`](#ptyresize) —— 调整 PTY 窗口大小
+  - [`exec-async`](#exec-async) —— 后台启动命令（读到 pid 即返回，进程继续跑）
+  - [`exec-logs`](#exec-logs) —— 增量拉取异步进程的输出
+  - [`exec-kill`](#exec-kill) —— 给异步进程发信号（默认 SIGKILL）
+  - [`exec-stdin`](#exec-stdin) —— 给异步进程送 stdin 输入
+  - [`pty-open`](#pty-open) —— 开一个持久 PTY 会话（script 记录全过程）
+  - [`pty-write`](#pty-write) —— 向 PTY 会话送输入（SendInput pty）
+  - [`pty-read`](#pty-read) —— 读 PTY 会话记录（按偏移增量）
+  - [`pty-close`](#pty-close) —— 结束 PTY 会话
+  - [`pty-resize`](#pty-resize) —— 调整 PTY 窗口大小
 
 ## 沙箱
 
@@ -816,6 +817,23 @@ cube-cli exists —— 判断沙箱内路径是否存在（true/false）
 用法:  cube-cli exists <sandboxID> <远端路径> [--user=<用户>]
 输出:  存在 → true（退出码 0）；不存在 → false（退出码 1，便于脚本判断）。
 示例:  cube-cli exists $SID /etc/hostname && echo ok
+```
+
+### write-files
+
+```text
+cube-cli write-files —— 批量写多个文件（远端:本地 清单 / JSON 清单）
+（同义词: write_files）
+分组: 文件
+
+用途:  对齐 SDK files.write_files：顺序写、遇错即停（报告已写数量 / 失败项）。
+用法:  cube-cli write-files <sandboxID> --files=远端:本地[,远端:本地...] [--manifest=清单.json] [--user=<用户>]
+参数:  --files=     逗号分隔的 `远端路径:本地文件` 列表（可重复给）。
+       --manifest=  JSON 清单文件：数组 [{"path":"/远端","local":"./本地"}] 或
+                   对象 {"远端":"本地"}。
+示例:  cube-cli write-files $SID --files=/tmp/a.txt:./a.txt,/tmp/b.txt:./b.txt
+       cube-cli write-files $SID --manifest=files.json
+注意:  单文件上限 8 MiB（同 write）；文件较大请用 aiod-cli 的 put。
 ```
 
 ### watch-dir

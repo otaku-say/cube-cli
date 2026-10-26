@@ -18,7 +18,7 @@ BINARY = REPO / "zig-out" / "bin" / "cube-cli"
 OUT = REPO / "docs" / "cube-cli.md"
 
 ALL_RE = re.compile(r"^【(.+?)】\s*$")
-ROW_RE = re.compile(r"^  (\S+)\s\s+(.*)$")
+ROW_RE = re.compile(r"^  (\S+)\s+(.*)$")
 
 
 def run(binary, *args):
@@ -45,7 +45,8 @@ def parse_table(binary):
 
 
 def slug(name):
-    return name.replace("-", "").replace("|", "")
+    """锚点保留连字符（### tpl-ls → #tpl-ls）；别名只取 | 前首名。"""
+    return name.split("|")[0]
 
 
 def build_doc(binary, title, intro_md, table, extra_head_md):
@@ -148,7 +149,7 @@ CUBE_HEAD = [
     "## 帮助怎么用",
     "",
     "```bash",
-    "cube-cli help              # 分组速查（58 行，常用命令）",
+    "cube-cli help              # 分组速查（常用命令）",
     "cube-cli help all          # 完整命令表，一条一行",
     "cube-cli help new          # 单命令详解（本文档对应小节）",
     "cube-cli new --help        # 同上，**只打印不建沙箱**",

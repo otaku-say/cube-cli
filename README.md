@@ -69,7 +69,7 @@ zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux-musl
 再跑一次生成脚本，README 不再重复维护命令清单。
 
 ```bash
-cube-cli help              # 分组速查（常用命令，≤60 行）
+cube-cli help              # 分组速查（常用命令，保持精简）
 cube-cli help all          # 完整命令表，一条一行
 cube-cli help <命令>       # 单命令详解：用途 / 用法 / 参数 / 示例 / 注意
 cube-cli <命令> --help     # 同上，且**只打印不执行**
@@ -88,7 +88,7 @@ cube-cli exec <sandboxID> 'zig version' --timeout=300
 cube-cli snap <sandboxID> --name=before-refactor
 ```
 
-逐条文档（37 条命令）：[`docs/cube-cli.md`](docs/cube-cli.md)。重新生成：
+完整命令面（每条命令一节文档）：[`docs/cube-cli.md`](docs/cube-cli.md)。重新生成：
 
 ```bash
 zig build -Doptimize=ReleaseFast
@@ -168,7 +168,7 @@ Claude Desktop (`claude_desktop_config.json`) / Cursor (`mcp.json`)：
 ## 测试
 
 ```bash
-sh tests/run_all.sh             # 一键全量（8 步）：构建 → help 冒烟 → MCP 协议/纯净性 → 工具 mock → 大文本 UTF-8 → CLI 对拍 → 内存稳定性 → 对抗套件
+sh tests/run_all.sh             # 一键全量（7 步）：构建 → help 冒烟 → MCP 协议/纯净性 → 工具 mock → 大文本 UTF-8 → 内存稳定性 → 对抗套件
 sh tests/help_smoke.sh          # 只跑帮助体系 + new --help 不建沙箱
 ```
 
@@ -184,7 +184,6 @@ sh tests/help_smoke.sh          # 只跑帮助体系 + new --help 不建沙箱
 | `mcp_mem_stability_test.py` | 常驻 `mcp-server` 在 3000 次调用下的内存增长门禁 |
 | `adv_cube_suite.py` / `adv_cube_defect_probe.py` | 全工具三轴覆盖、参数毒化、并发 1:1 应答、挂死检测、破坏性工具幂等 |
 | `adv_cube_live.py` / `mcp_live_smoke.py` | **真实环境**全链路验收（创建→执行→文件往返→快照→销毁），需真实凭据，手工跑 |
-| `cmd_parity_smoke.py` | CLI 门面改造前后逐字节对拍（需 `--before <改造前二进制>`；缺基线自动 SKIP） |
 
 ## SDK 漂移检查（跟进上游）
 

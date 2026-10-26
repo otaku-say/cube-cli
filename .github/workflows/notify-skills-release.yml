@@ -1,5 +1,8 @@
 name: 发布 CLI 后通知技能仓库
 
+# 事件名 `sandbox-cli-release` 是下游 otaku-say/skills 的订阅契约，与 aiod-cli 仓库共用同一个值。
+# 区分是哪个工具靠 client_payload.tool（cube-cli），不要靠改事件名——改名会静默断订阅。
+
 on:
   workflow_run:
     workflows: [build]
@@ -32,7 +35,7 @@ jobs:
             --arg tool 'cube-cli' \
             --arg source_sha "$SOURCE_SHA" \
             --arg source_run_id "$SOURCE_RUN_ID" \
-            '{event_type:"cube-cli-release",client_payload:{source_repo:$source_repo,tool:$tool,source_sha:$source_sha,source_run_id:$source_run_id}}')"
+            '{event_type:"sandbox-cli-release",client_payload:{source_repo:$source_repo,tool:$tool,source_sha:$source_sha,source_run_id:$source_run_id}}')"
 
           curl --fail-with-body --silent --show-error --retry 3 \
             -X POST \

@@ -4,7 +4,8 @@
 //!   1. 命令表是唯一事实源，dispatch 的每个分支都在这里有条目；改命令先改这里。
 //!   2. `<cmd> --help` / `<cmd> -h` / `help <cmd>` 三种写法等价，且**只打印不执行**
 //!      （必须在 main 的 dispatch 之前拦截，`new --help` 绝不能真的建沙箱）。
-//!   3. `help` 输出分组速查（≤60 行），`help all` 输出完整表，`help <cmd>` 输出单命令详情。
+//!   3. `help` 输出分组速查（保持精简，行数上限由 tests/help_smoke.sh 把关），
+//!      `help all` 输出完整表，`help <cmd>` 输出单命令详情。
 //!   4. 所有取值型 flag 一律 `--key=value` 等号写法；布尔开关直接写 `--flag`。
 const std = @import("std");
 const cfg = @import("cfg.zig");
