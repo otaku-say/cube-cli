@@ -184,7 +184,10 @@ fn cmdExecAsync(c: *Ctx, a: util.Args) !void {
     if (a.get("timeout")) |t| {
         if (std.fmt.parseInt(u64, t, 10)) |secs| {
             timeout_s = secs;
-        } else |_| {}
+        } else |_| {
+            try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=600\n", .{t});
+            return error.BadArg;
+        }
     }
     const envs = try util.envsJson(c.arena, a.flags);
     var s = sdkmod.Sdk.fromCtx(c);
@@ -356,8 +359,8 @@ fn getStr(v: std.json.Value, key: []const u8) ?[]const u8 {
 /// 请求体 {code, language, env_vars}；响应是 ndjson，事件类型：
 ///   stdout / stderr / result / error / number_of_executions
 /// result 里除 text 外还可能是 html/svg/png/jpeg/pdf/latex/json/javascript/chart。
-pub fn kernelRun(c: *Ctx, sid: []const u8, code: []const u8, lang: ?[]const u8, envs_json: []const u8, timeout_ms: u64) !void {
-    _ = timeout_ms; // 读超时依赖服务端；事件流在解释器返回后自然结束
+/// 注：本通道的读超时由服务端控制，没有 --timeout（见 help 的 code 条目）。
+pub fn kernelRun(c: *Ctx, sid: []const u8, code: []const u8, lang: ?[]const u8, envs_json: []const u8) !void {
     const proxy = cfg.proxyURL() orelse {
         try c.out.print("错误：缺少环境变量 CUBESANDBOX_PROXY_URL\n", .{});
         return error.MissingConfig;

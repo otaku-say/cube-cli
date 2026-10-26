@@ -62,6 +62,12 @@ fn cmdCat(c: *Ctx, a: util.Args) !void {
         return e;
     };
     try c.out.print("{s}", .{content});
+    // 内容顶满读缓冲 = 服务端响应被截断（无标记、无报错就输出半截文件是历史缺陷）
+    if (content.len >= sdkmod.BUF) {
+        try c.out.flush();
+        std.debug.print("⚠ 响应超上限已截断：文件内容不完整（上限 {d} B）\n", .{sdkmod.BUF});
+        std.process.exit(1);
+    }
 }
 
 /// write <sid> <本地文件|-> <远端路径>  —— 从本地（或 stdin）写入远端
@@ -198,6 +204,11 @@ fn cmdGet(c: *Ctx, a: util.Args) !void {
     var w = f.writer(c.io, &wbuf);
     try w.interface.writeAll(res.body);
     try w.interface.flush();
+    if (res.truncated) {
+        try c.out.flush();
+        std.debug.print("⚠ 响应超上限已截断：{s} 只写入前 {d} B（上限 {d} B），不是完整文件\n", .{ local, res.body.len, t.buf.len });
+        std.process.exit(1);
+    }
     try c.out.print("saved {d} bytes -> {s}\n", .{ res.body.len, local });
 }
 

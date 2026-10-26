@@ -38,7 +38,8 @@ fn post(c: *Ctx, path: []const u8, body: []const u8, msg: []const u8, arg: []con
 fn cmdPause(c: *Ctx, a: util.Args) !void {
     const sid = try sidOf(a);
     var s = sdkmod.Sdk.fromCtx(c);
-    sdk_lifecycle.sandboxPause(&s, sid) catch |e| {
+    // 破坏性/写命令的 sandboxID 必须转义：`rm 'abc?force=1'` 不能变成 DELETE /sandboxes/abc?force=1
+    sdk_lifecycle.sandboxPause(&s, try jsonfmt.qenc(c.arena, sid, false)) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };
@@ -59,7 +60,7 @@ fn cmdResume(c: *Ctx, a: util.Args) !void {
         timeout_val = std.fmt.parseInt(u64, t, 10) catch null;
     }
     var s = sdkmod.Sdk.fromCtx(c);
-    sdk_lifecycle.sandboxResume(&s, sid, timeout_val) catch |e| {
+    sdk_lifecycle.sandboxResume(&s, try jsonfmt.qenc(c.arena, sid, false), timeout_val) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };
@@ -103,7 +104,7 @@ fn cmdRefresh(c: *Ctx, a: util.Args) !void {
 fn cmdSnap(c: *Ctx, a: util.Args) !void {
     const sid = try sidOf(a);
     var s = sdkmod.Sdk.fromCtx(c);
-    const body = sdk_snapshot.snapshotCreate(&s, sid, a.get("name")) catch |e| {
+    const body = sdk_snapshot.snapshotCreate(&s, try jsonfmt.qenc(c.arena, sid, false), a.get("name")) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };
@@ -272,7 +273,7 @@ fn cmdRollback(c: *Ctx, a: util.Args) !void {
     const sid = try sidOf(a);
     const snap = a.at(1) orelse return error.MissingArg;
     var s = sdkmod.Sdk.fromCtx(c);
-    const body = sdk_snapshot.snapshotRollback(&s, sid, snap, false, 0) catch |e| {
+    const body = sdk_snapshot.snapshotRollback(&s, try jsonfmt.qenc(c.arena, sid, false), snap, false, 0) catch |e| {
         if (e == error.MissingConfig) {
             try c.out.print("{s}\n", .{s.failText()});
             return e;
@@ -316,6 +317,11 @@ fn cmdClone(c: *Ctx, a: util.Args) !void {
         };
     }
     if (n == 0) n = 1;
+    // 上限：每个克隆体都是真沙箱，再大就该分几次跑（--n=1000 会打爆控制面/内存）
+    if (n > 200) {
+        std.debug.print("[clone] --n={d} 超过上限，按 200 个执行\n", .{n});
+        n = 200;
+    }
     var conc: usize = 1;
     if (a.get("concurrency")) |v| {
         conc = std.fmt.parseInt(usize, v, 10) catch {
@@ -337,7 +343,7 @@ fn cmdClone(c: *Ctx, a: util.Args) !void {
 
     // ① 打快照
     const buf = try c.arena.alloc(u8, BUF);
-    const spath = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/snapshots", .{sid});
+    const spath = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/snapshots", .{try jsonfmt.qenc(c.arena, sid, false)});
     const sres = try c.control(.POST, spath, "{}", buf);
     const snap = envd.extractString(c.arena, sres.body, "snapshotID") orelse {
         try c.out.print("快照创建失败: {s}\n", .{sres.body});
@@ -488,15 +494,17 @@ fn cloneWorker(job: *CloneJob) void {
     var client: std.http.Client = .{ .allocator = std.heap.smp_allocator, .io = job.io };
     defer client.deinit();
 
+    // 缓冲提到循环外复用：原来每轮在同一个 arena 里再要 2 MiB，worker 退出才释放（--n=1000 直接 OOM）
+    const buf = arena.alloc(u8, BUF) catch {
+        job.errs[0].set("内存分配失败", .{});
+        job.abort.store(true, .monotonic);
+        return;
+    };
+
     while (!job.abort.load(.monotonic)) {
         const i = job.next.fetchAdd(1, .monotonic);
         if (i >= job.n) return;
         if (job.abort.load(.monotonic)) return;
-        const buf = arena.alloc(u8, BUF) catch {
-            job.errs[i].set("内存分配失败", .{});
-            job.abort.store(true, .monotonic);
-            return;
-        };
         const url = std.fmt.allocPrint(arena, "{s}/sandboxes", .{ctxmod.trimSlash(job.api)}) catch {
             job.errs[i].set("URL 拼接失败", .{});
             job.abort.store(true, .monotonic);
@@ -542,7 +550,8 @@ fn cloneWorker(job: *CloneJob) void {
 /// 删沙箱（用于回滚克隆体）：404 视为已删；503/409/408 按 Retry-After 重试。
 fn killOne(c: *Ctx, id: []const u8) bool {
     const buf = c.arena.alloc(u8, BUF) catch return false;
-    const path = std.fmt.allocPrint(c.arena, "/sandboxes/{s}", .{id}) catch return false;
+    const idq = jsonfmt.qenc(c.arena, id, false) catch id;
+    const path = std.fmt.allocPrint(c.arena, "/sandboxes/{s}", .{idq}) catch return false;
     var attempt: u32 = 0;
     while (true) {
         const res = c.controlRaw(.DELETE, path, null, &.{}, buf) catch return false;
@@ -719,7 +728,7 @@ fn waitStateQuiet(c: *Ctx, sid: []const u8, target: []const u8, limit_s: u64, qu
     var waited: u64 = 0;
     while (true) {
         const buf = try c.arena.alloc(u8, BUF);
-        const path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}", .{sid});
+        const path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}", .{try jsonfmt.qenc(c.arena, sid, false)});
         const res = try c.control(.GET, path, null, buf);
         const st = stateOf(c, res.body) orelse "";
         if (std.ascii.eqlIgnoreCase(st, target)) {
@@ -794,7 +803,7 @@ fn cmdNet(c: *Ctx, a: util.Args) !void {
         try c.out.print("已阻止：上游 PUT 是全量替换语义，缺 allowInternetAccess 会静默恢复公网访问；--internet 属放宽操作。\n确认要按上面内容覆盖策略就加 --yes；只想看就加 --print。\n", .{});
         return error.NeedsConfirm;
     }
-    const path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/network", .{sid});
+    const path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/network", .{try jsonfmt.qenc(c.arena, sid, false)});
     const buf = try c.arena.alloc(u8, 2 << 20);
     _ = try c.control(.PUT, path, body, buf);
     try c.out.print("network updated（{s}）← {s}\n", .{ sid, body });

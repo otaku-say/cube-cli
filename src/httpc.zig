@@ -11,6 +11,9 @@ pub const Response = struct {
     body: []const u8,
     /// 响应头副本（响应体读完、连接复用之后依然有效；见 captureHeaders）。
     headers: Headers = &.{},
+    /// 响应体没读完就被缓冲上限截断（got == buf.len 且服务端声明更长或长度未知）。
+    /// 调用方据此提示「已截断」并以非 0 退出，绝不静默返回半截内容。
+    truncated: bool = false,
 
     pub fn ok(self: Response) bool {
         return self.status >= 200 and self.status < 300;
@@ -159,12 +162,16 @@ pub fn requestStopAt(
             if (std.mem.indexOf(u8, buf[0..got], nd) != null) break;
         }
     }
+    // 截断判定：缓冲写满，且服务端声明的长度比读到的多（或根本没声明长度）。
+    // 命中 needle 的分离读是「故意提前停」，不算截断。
+    const full = got == buf.len and (want == null or want.? > got);
+    const truncated = full and needle == null;
     // 兜底：服务器无视"未请求压缩"仍返回压缩体时手动解压
     if (response.head.content_encoding != .identity) {
         const dec = try decompressBody(buf[0..got], response.head.content_encoding);
-        return .{ .status = status, .body = dec, .headers = resp_headers };
+        return .{ .status = status, .body = dec, .headers = resp_headers, .truncated = truncated or dec.len == buf.len };
     }
-    return .{ .status = status, .body = buf[0..got], .headers = resp_headers };
+    return .{ .status = status, .body = buf[0..got], .headers = resp_headers, .truncated = truncated };
 }
 
 /// 兜底解压（gzip/zlib）：服务器无视"未请求压缩"仍返回压缩体时使用。

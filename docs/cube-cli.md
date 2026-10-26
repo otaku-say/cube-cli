@@ -244,7 +244,8 @@ cube-cli code —— 用解释器在沙箱内跑一段代码
        --mode=      interp（默认，任何镜像可用）或 kernel（需要镜像监听
                   并对外暴露 49999；缺失时报 HTTP 502，不是 CLI 缺陷）。
        --lang=      python（默认）/ js（js、javascript、node、nodejs）/ bash（sh、shell）。
-       --timeout=   秒；缺省不设截止（同 SDK run_code(timeout=None)）。\n        \\                   kernel 模式不支持 --timeout（该通道的读超时由服务端控制，传了也不生效）。
+       --timeout=   秒；缺省不设截止（同 SDK run_code(timeout=None)）。
+                   kernel 模式不支持 --timeout（该通道的读超时由服务端控制，传了也不生效）。
        --env= / --user=  同 exec。
 示例:  cube-cli code $SID 'print(sum(range(10)))'
        cube-cli code $SID 'console.log(1+1)' --lang=js

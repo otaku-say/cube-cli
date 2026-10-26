@@ -96,8 +96,14 @@ fn cmdPtyOpen(c: *Ctx, a: util.Args) !void {
 
     var rows: u64 = 24;
     var cols: u64 = 80;
-    if (a.get("rows")) |r| rows = std.fmt.parseInt(u64, r, 10) catch 24;
-    if (a.get("cols")) |r| cols = std.fmt.parseInt(u64, r, 10) catch 80;
+    if (a.get("rows")) |r| rows = std.fmt.parseInt(u64, r, 10) catch {
+        try c.out.print("错误：--rows= 需要正整数（收到 {s}）；请用等号写法 --rows=24\n", .{r});
+        return error.BadArg;
+    };
+    if (a.get("cols")) |r| cols = std.fmt.parseInt(u64, r, 10) catch {
+        try c.out.print("错误：--cols= 需要正整数（收到 {s}）；请用等号写法 --cols=80\n", .{r});
+        return error.BadArg;
+    };
     const shell = a.get("shell") orelse "/bin/bash";
 
     const tag = try cmd_proc.newTag(c);
@@ -289,8 +295,14 @@ fn cmdPtyResize(c: *Ctx, a: util.Args) !void {
     const sid = a.at(0) orelse return error.MissingArg;
     const pid_s = a.at(1) orelse return error.MissingArg;
     const pid = try parsePid(c, pid_s);
-    const rows: u64 = if (a.get("rows")) |r| (std.fmt.parseInt(u64, r, 10) catch 24) else 24;
-    const cols: u64 = if (a.get("cols")) |r| (std.fmt.parseInt(u64, r, 10) catch 80) else 80;
+    const rows: u64 = if (a.get("rows")) |r| (std.fmt.parseInt(u64, r, 10) catch {
+        try c.out.print("错误：--rows= 需要正整数（收到 {s}）；请用等号写法 --rows=24\n", .{r});
+        return error.BadArg;
+    }) else 24;
+    const cols: u64 = if (a.get("cols")) |r| (std.fmt.parseInt(u64, r, 10) catch {
+        try c.out.print("错误：--cols= 需要正整数（收到 {s}）；请用等号写法 --cols=80\n", .{r});
+        return error.BadArg;
+    }) else 80;
     const buf = try c.arena.alloc(u8, BUF);
     const token = try c.connectToken(sid, buf);
     const base = try c.envdBase(sid);

@@ -178,7 +178,10 @@ fn cmdNew(c: *Ctx, args: []const []const u8) !void {
     if (a.get("timeout")) |t| {
         if (std.fmt.parseInt(i64, t, 10)) |n| {
             timeout_part = try std.fmt.allocPrint(c.arena, ",\"timeout\":{d}", .{n});
-        } else |_| {}
+        } else |_| {
+            try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=600\n", .{t});
+            return error.BadArg;
+        }
     }
     const meta_part = try buildMetadata(c, a);
     const extra_part = try buildCreateExtras(c, a);
@@ -217,12 +220,16 @@ fn cmdCode(c: *Ctx, args: []const []const u8) !void {
     const envs_json = try util.envsJson(c.arena, a.flags);
     var timeout_ms: u64 = 0;
     if (a.get("timeout")) |t| {
-        if (std.fmt.parseInt(u64, t, 10)) |n| timeout_ms = n * 1000 else |_| {}
+        if (std.fmt.parseInt(u64, t, 10)) |n| timeout_ms = n * 1000 else |_| {
+            try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=600\n", .{t});
+            return error.BadArg;
+        }
     }
 
     if (a.get("mode")) |m| {
         if (util.eq(m, "kernel")) {
-            return cmd_proc.kernelRun(c, sid, src, a.get("lang"), envs_json, timeout_ms);
+            // kernel 通道的读超时由服务端控制，--timeout 只对 interp 生效（见 help）
+            return cmd_proc.kernelRun(c, sid, src, a.get("lang"), envs_json);
         }
         if (!util.eq(m, "interp")) {
             try c.out.print("不支持的模式: {s}（可选 interp / kernel）\n", .{m});
@@ -252,7 +259,13 @@ fn runInSandbox(c: *Ctx, sid: []const u8, command: []const u8, cwd: ?[]const u8,
     const res = try envd.exec(c.arena, c.client, envd_base, token, user, command, cwd, envs_json, timeout_ms, buf);
     if (res.stdout.len > 0) try c.out.print("{s}", .{res.stdout});
     if (res.stderr.len > 0) try c.out.print("{s}", .{res.stderr});
-    if (res.exit_code != 0) try c.out.print("（exit {d}）\n", .{res.exit_code});
+    // 退出码要能被外层 shell 看见，提示走 stderr（不能污染 `OUT=$(...)` 这类管道）
+    if (res.truncated or res.exit_code != 0) {
+        try c.out.flush();
+        if (res.truncated) std.debug.print("⚠ 响应超上限已截断：输出不完整\n", .{});
+        if (res.exit_code != 0) std.debug.print("（exit {d}）\n", .{res.exit_code});
+        std.process.exit(if (res.exit_code != 0) @intCast(@min(@max(res.exit_code, 0), 255)) else 1);
+    }
 }
 
 /// exec <sid> <命令...> [--cwd=] [--env=NAME|K=V] [--timeout=秒] [--user=用户]
@@ -305,13 +318,22 @@ fn cmdExec(c: *Ctx, args: []const []const u8) !void {
     // 显式 --timeout=秒 才作为 envd 侧硬截止。
     var timeout_ms: u64 = 0;
     if (a.get("timeout")) |t| {
-        if (std.fmt.parseInt(u64, t, 10)) |n| timeout_ms = n * 1000 else |_| {}
+        if (std.fmt.parseInt(u64, t, 10)) |n| timeout_ms = n * 1000 else |_| {
+            try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=600\n", .{t});
+            return error.BadArg;
+        }
     }
 
     const res = try envd.exec(c.arena, c.client, envd_base, token, a.get("user"), command, a.get("cwd"), if (envs_json.len > 0) envs_json else null, timeout_ms, buf);
     if (res.stdout.len > 0) try c.out.print("{s}", .{res.stdout});
     if (res.stderr.len > 0) try c.out.print("{s}", .{res.stderr});
-    if (res.exit_code != 0) try c.out.print("（exit {d}）\n", .{res.exit_code});
+    // 同 runInSandbox：退出码透传，提示走 stderr
+    if (res.truncated or res.exit_code != 0) {
+        try c.out.flush();
+        if (res.truncated) std.debug.print("⚠ 响应超上限已截断：输出不完整\n", .{});
+        if (res.exit_code != 0) std.debug.print("（exit {d}）\n", .{res.exit_code});
+        std.process.exit(if (res.exit_code != 0) @intCast(@min(@max(res.exit_code, 0), 255)) else 1);
+    }
 }
 
 /// new 的可选扩展字段（对齐 SDK Sandbox.create 的可选参数）：

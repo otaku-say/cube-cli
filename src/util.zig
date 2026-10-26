@@ -51,12 +51,16 @@ pub fn envsJson(arena: std.mem.Allocator, flags: []const [2][]const u8) ![]const
         } else {
             const z = try arena.allocSentinel(u8, kv[1].len, 0);
             @memcpy(z[0..kv[1].len], kv[1]);
-            const p = std.c.getenv(z.ptr) orelse continue;
+            const p = std.c.getenv(z.ptr) orelse {
+                // 不静默跳过：cron/systemd/docker 里变量未导出时，命令会拿到空环境却退出 0
+                std.debug.print("⚠ --env={s} 本机无此变量，已跳过\n", .{name});
+                continue;
+            };
             value = std.mem.span(p);
         }
         if (!first) try w.print(",", .{});
         first = false;
-        try w.print("\"{s}\":\"{s}\"", .{ name, try envd.jsonEscape(arena, value) });
+        try w.print("\"{s}\":\"{s}\"", .{ try envd.jsonEscape(arena, name), try envd.jsonEscape(arena, value) });
     }
     return w.buffered();
 }

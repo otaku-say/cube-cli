@@ -15,6 +15,8 @@ pub const Result = struct {
     stderr: []const u8 = "",
     exit_code: i32 = 0,
     pid: i32 = 0,
+    /// 输出/响应超缓冲上限被截断（调用方必须提示并非 0 退出，不能当完整结果用）。
+    truncated: bool = false,
 };
 
 /// JSON 字符串转义（不依赖 std.json 的 Stringify，行为可控）。
@@ -84,12 +86,14 @@ fn appendTo(dst: []u8, len: *usize, src: []const u8) !void {
     len.* += src.len;
 }
 
-fn b64decode(dst: []u8, len: *usize, encoded: []const u8) void {
-    const n = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch return;
-    if (len.* + n > dst.len) return;
+/// base64 解码追加；返回 false = 放不下（被截断，调用方需置 truncated）。
+fn b64decode(dst: []u8, len: *usize, encoded: []const u8) bool {
+    const n = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch return true;
+    if (len.* + n > dst.len) return false;
     const out = dst[len.*..][0..n];
-    std.base64.standard.Decoder.decode(out, encoded) catch return;
+    std.base64.standard.Decoder.decode(out, encoded) catch return true;
     len.* += n;
+    return true;
 }
 
 /// 执行一条命令，汇总 stdout/stderr/exitCode。
@@ -142,7 +146,11 @@ pub fn exec(
     n += 1;
 
     const res = try httpc.request(client, .POST, url, hs[0..n], framed, buf);
-    if (!res.ok()) return error.HttpError;
+    if (!res.ok()) {
+        // 与控制面 ctx.control 对齐：状态码 + body 必须可见（否则只剩 error.HttpError）
+        std.debug.print("HTTP {d}: {s}\n", .{ res.status, res.body });
+        return error.HttpError;
+    }
 
     // 解析响应流
     var out_buf = try arena.alloc(u8, 4 << 20);
@@ -151,6 +159,8 @@ pub fn exec(
     var err_len: usize = 0;
     var exit_code: i32 = 0;
     var pid: i32 = 0;
+    // 响应流本身被截断 → 流不完整，解析出来的结果不可信
+    var truncated: bool = res.truncated;
 
     var stream = connect.Stream{ .buf = res.body };
     while (try stream.next()) |env| {
@@ -164,12 +174,12 @@ pub fn exec(
         }
         if (std.mem.indexOf(u8, env.payload, "\"stdout\"")) |_| {
             if (extractString(arena, env.payload, "stdout")) |v| {
-                b64decode(out_buf, &out_len, v);
+                if (!b64decode(out_buf, &out_len, v)) truncated = true;
             }
         }
         if (std.mem.indexOf(u8, env.payload, "\"stderr\"")) |_| {
             if (extractString(arena, env.payload, "stderr")) |v| {
-                b64decode(err_buf, &err_len, v);
+                if (!b64decode(err_buf, &err_len, v)) truncated = true;
             }
         }
     }
@@ -179,6 +189,7 @@ pub fn exec(
         .stderr = err_buf[0..err_len],
         .exit_code = exit_code,
         .pid = pid,
+        .truncated = truncated,
     };
 }
 
