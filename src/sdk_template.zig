@@ -56,7 +56,7 @@ pub fn resolveAliasRef(self: *Sdk, name: []const u8) ?[]const u8 {
 }
 
 pub fn templateInfo(self: *Sdk, tid: []const u8) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/templates/{s}", .{tid});
+    const path = try std.fmt.allocPrint(self.arena, "/templates/{s}", .{try jsonfmt.qenc(self.arena, tid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const res = try self.control(.GET, path, null, buf);
     return self.arena.dupe(u8, res.body);

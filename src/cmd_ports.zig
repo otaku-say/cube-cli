@@ -106,7 +106,7 @@ fn cmdPorts(c: *Ctx, a: util.Args) !void {
         const ext: []const u8 = if (p.external) "可连" else "-";
         if (p.external) {
             if (proxy) |px| {
-                const url = try std.fmt.allocPrint(c.arena, "{s}/sandbox/{s}/{d}/", .{ ctxmod.trimSlash(px), sid, p.port });
+                const url = try std.fmt.allocPrint(c.arena, "{s}/sandbox/{s}/{d}/", .{ ctxmod.trimSlash(px), try envd.urlEncode(c.arena, sid), p.port });
                 try c.out.print("{d:<6} {s:<16} {s:<6} {s:<18} {s}\n", .{ p.port, p.bind, ext, name, url });
                 continue;
             }

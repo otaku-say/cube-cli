@@ -38,8 +38,7 @@ fn post(c: *Ctx, path: []const u8, body: []const u8, msg: []const u8, arg: []con
 fn cmdPause(c: *Ctx, a: util.Args) !void {
     const sid = try sidOf(a);
     var s = sdkmod.Sdk.fromCtx(c);
-    // 破坏性/写命令的 sandboxID 必须转义：`rm 'abc?force=1'` 不能变成 DELETE /sandboxes/abc?force=1
-    sdk_lifecycle.sandboxPause(&s, try jsonfmt.qenc(c.arena, sid, false)) catch |e| {
+    sdk_lifecycle.sandboxPause(&s, sid) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };
@@ -68,7 +67,7 @@ fn cmdResume(c: *Ctx, a: util.Args) !void {
         };
     }
     var s = sdkmod.Sdk.fromCtx(c);
-    sdk_lifecycle.sandboxResume(&s, try jsonfmt.qenc(c.arena, sid, false), timeout_val) catch |e| {
+    sdk_lifecycle.sandboxResume(&s, sid, timeout_val) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };
@@ -112,7 +111,7 @@ fn cmdRefresh(c: *Ctx, a: util.Args) !void {
 fn cmdSnap(c: *Ctx, a: util.Args) !void {
     const sid = try sidOf(a);
     var s = sdkmod.Sdk.fromCtx(c);
-    const body = sdk_snapshot.snapshotCreate(&s, try jsonfmt.qenc(c.arena, sid, false), a.get("name")) catch |e| {
+    const body = sdk_snapshot.snapshotCreate(&s, sid, a.get("name")) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };
@@ -287,7 +286,7 @@ fn cmdRollback(c: *Ctx, a: util.Args) !void {
     const sid = try sidOf(a);
     const snap = a.at(1) orelse return error.MissingArg;
     var s = sdkmod.Sdk.fromCtx(c);
-    const body = sdk_snapshot.snapshotRollback(&s, try jsonfmt.qenc(c.arena, sid, false), snap, false, 0) catch |e| {
+    const body = sdk_snapshot.snapshotRollback(&s, sid, snap, false, 0) catch |e| {
         if (e == error.MissingConfig) {
             try c.out.print("{s}\n", .{s.failText()});
             return e;
@@ -590,7 +589,7 @@ fn killOne(c: *Ctx, id: []const u8) bool {
 /// 删模板/快照（DELETE /templates/{id}）；404 视为已删。
 fn killTemplate(c: *Ctx, id: []const u8) bool {
     const buf = c.arena.alloc(u8, BUF) catch return false;
-    const path = std.fmt.allocPrint(c.arena, "/templates/{s}", .{id}) catch return false;
+    const path = std.fmt.allocPrint(c.arena, "/templates/{s}", .{jsonfmt.qenc(c.arena, id, false) catch id}) catch return false;
     const res = c.controlRaw(.DELETE, path, null, &.{}, buf) catch return false;
     if (res.ok() or res.status == 404) return true;
     std.debug.print("[clone] 删除 {s} 失败：HTTP {d} {s}\n", .{ id, res.status, res.body });

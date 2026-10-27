@@ -262,7 +262,7 @@ pub const CodeOptions = struct {
 pub fn sandboxCode(self: *Sdk, sid: []const u8, code: []const u8, opt: CodeOptions) !ExecResult {
     if (std.mem.eql(u8, opt.mode, "kernel")) {
         if (self.proxy.len == 0) return error.MissingConfig;
-        const url = try std.fmt.allocPrint(self.arena, "{s}/sandbox/{s}/49999/execute", .{ self.proxy, sid });
+        const url = try std.fmt.allocPrint(self.arena, "{s}/sandbox/{s}/49999/execute", .{ self.proxy, try envd.urlEncode(self.arena, sid) });
         const envs_part = if (opt.env_json) |ej|
             try std.fmt.allocPrint(self.arena, "{{{s}}}", .{ej})
         else

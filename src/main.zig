@@ -11,6 +11,7 @@ const httpc = @import("httpc.zig");
 const ctxmod = @import("ctx.zig");
 const envd = @import("envd.zig");
 const util = @import("util.zig");
+const jsonfmt = @import("jsonfmt.zig");
 const cmd_template = @import("cmd_template.zig");
 const cmd_ports = @import("cmd_ports.zig");
 const cmd_files = @import("cmd_files.zig");
@@ -196,7 +197,7 @@ fn cmdNew(c: *Ctx, args: []const []const u8) !void {
     try c.out.print("{s}\n", .{sid});
 
     // 提示网关与端点（查模板详情拿端口，推断 aiod 网关）
-    const detail_path = try std.fmt.allocPrint(c.arena, "/templates/{s}", .{tpl});
+    const detail_path = try std.fmt.allocPrint(c.arena, "/templates/{s}", .{try jsonfmt.qenc(c.arena, tpl, false)});
     const dres = c.control(.GET, detail_path, null, buf) catch return;
     const raw_ports = envd.extractString(c.arena, dres.body, "com.exposed_ports") orelse return;
     const ports = cmd_template.parsePorts(c.arena, raw_ports) catch return;

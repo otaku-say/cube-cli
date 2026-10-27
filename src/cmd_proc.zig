@@ -377,7 +377,7 @@ pub fn kernelRun(c: *Ctx, sid: []const u8, code: []const u8, lang: ?[]const u8, 
         try c.out.print("错误：缺少环境变量 CUBESANDBOX_PROXY_URL\n", .{});
         return error.MissingConfig;
     };
-    const url = try std.fmt.allocPrint(c.arena, "{s}/sandbox/{s}/49999/execute", .{ ctxmod.trimSlash(proxy), sid });
+    const url = try std.fmt.allocPrint(c.arena, "{s}/sandbox/{s}/49999/execute", .{ ctxmod.trimSlash(proxy), try envd.urlEncode(c.arena, sid) });
     const envs_part: []const u8 = if (envs_json.len > 0)
         try std.fmt.allocPrint(c.arena, "{{{s}}}", .{envs_json})
     else

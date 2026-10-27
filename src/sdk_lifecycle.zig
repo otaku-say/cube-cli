@@ -83,7 +83,7 @@ pub const InfoOptions = struct {
 
 /// GET /sandboxes/<id>；可轮询到目标状态。返回最终响应体。
 pub fn sandboxInfo(self: *Sdk, sid: []const u8, opt: InfoOptions) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     var res = try self.control(.GET, path, null, buf);
     if (opt.wait_state) |target| {
@@ -227,13 +227,13 @@ pub fn systemHealth(self: *Sdk) ![]const u8 {
 // ---------------- pause / resume / refresh / timeout ----------------
 
 pub fn sandboxPause(self: *Sdk, sid: []const u8) !void {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/pause", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/pause", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     _ = try self.control(.POST, path, "{}", buf);
 }
 
 pub fn sandboxResume(self: *Sdk, sid: []const u8, timeout_s: ?u64) !void {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/resume", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/resume", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const body = if (timeout_s) |t|
         try std.fmt.allocPrint(self.arena, "{{\"timeout\":{d}}}", .{t})
@@ -243,7 +243,7 @@ pub fn sandboxResume(self: *Sdk, sid: []const u8, timeout_s: ?u64) !void {
 }
 
 pub fn sandboxRefresh(self: *Sdk, sid: []const u8, duration_s: ?u64) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/refreshes", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/refreshes", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const body = if (duration_s) |d|
         try std.fmt.allocPrint(self.arena, "{{\"duration\":{d}}}", .{d})
@@ -254,7 +254,7 @@ pub fn sandboxRefresh(self: *Sdk, sid: []const u8, duration_s: ?u64) ![]const u8
 }
 
 pub fn sandboxSetTimeout(self: *Sdk, sid: []const u8, seconds: i64) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/timeout", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/timeout", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const body = try std.fmt.allocPrint(self.arena, "{{\"timeout\":{d}}}", .{seconds});
     const res = try self.control(.POST, path, body, buf);
@@ -271,7 +271,7 @@ pub const NetSpec = struct {
 };
 
 pub fn sandboxSetNet(self: *Sdk, sid: []const u8, spec: NetSpec) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/network", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/network", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     var w = std.Io.Writer.fixed(try self.arena.alloc(u8, 1 << 16));
     try w.writeAll("{");
@@ -420,7 +420,7 @@ pub fn sandboxClone(self: *Sdk, sid: []const u8, opt: CloneOptions) ![]const u8 
 pub const DeleteResult = enum { deleted, already_gone };
 
 pub fn sandboxDelete(self: *Sdk, sid: []const u8, allow_retry: bool) !DeleteResult {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     var attempt: u32 = 0;
     while (true) {

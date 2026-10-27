@@ -7,7 +7,6 @@ const ctxmod = @import("ctx.zig");
 const util = @import("util.zig");
 const sdkmod = @import("sdk.zig");
 const sdk_lifecycle = @import("sdk_lifecycle.zig");
-const jsonfmt = @import("jsonfmt.zig");
 
 const Ctx = ctxmod.Ctx;
 
@@ -30,8 +29,7 @@ pub fn run(c: *Ctx, argv: []const []const u8) !void {
         return error.MissingArg;
     };
     var s = sdkmod.Sdk.fromCtx(c);
-    // 转义 sandboxID：`rm 'abc?force=1'` 不能变成 DELETE /sandboxes/abc?force=1（删掉 abc）
-    const res = sdk_lifecycle.sandboxDelete(&s, try jsonfmt.qenc(c.arena, sid, false), true) catch |e| {
+    const res = sdk_lifecycle.sandboxDelete(&s, sid, true) catch |e| {
         try s.printErr(c.out, e);
         return e;
     };

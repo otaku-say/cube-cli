@@ -101,7 +101,7 @@ fn baseName(p: []const u8) []const u8 {
 
 /// 取模板详情里的暴露端口注解（字符串扫描，避免复杂 JSON 类型）。
 fn detailPorts(c: *Ctx, id: []const u8, buf: []u8) ![]u16 {
-    const path = try std.fmt.allocPrint(c.arena, "/templates/{s}", .{id});
+    const path = try std.fmt.allocPrint(c.arena, "/templates/{s}", .{try jsonfmt.qenc(c.arena, id, false)});
     const res = c.control(.GET, path, null, buf) catch return &.{};
     const raw = envd.extractString(c.arena, res.body, "com.exposed_ports") orelse return &.{};
     return parsePorts(c.arena, raw);
@@ -430,7 +430,7 @@ fn probeTemplate(c: *Ctx, tpl_id: []const u8) !ProbeOut {
         try c.out.print("探测沙箱创建失败: {s}\n", .{res.body});
         return error.NoSandbox;
     };
-    const kill_path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}", .{sid});
+    const kill_path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}", .{try jsonfmt.qenc(c.arena, sid, false)});
     defer {
         _ = c.control(.DELETE, kill_path, null, buf) catch {};
     }
@@ -546,7 +546,10 @@ fn tplLogs(c: *Ctx, a: util.Args) !void {
     const tid = a.at(0) orelse return error.MissingArg;
     const bid = a.at(1) orelse return error.MissingArg;
     const buf = try c.arena.alloc(u8, 8 << 20);
-    const path = try std.fmt.allocPrint(c.arena, "/templates/{s}/builds/{s}/logs", .{ tid, bid });
+    const path = try std.fmt.allocPrint(c.arena, "/templates/{s}/builds/{s}/logs", .{
+        try jsonfmt.qenc(c.arena, tid, false),
+        try jsonfmt.qenc(c.arena, bid, false),
+    });
     const res = try c.control(.GET, path, null, buf);
     try c.out.print("{s}\n", .{res.body});
 }

@@ -264,3 +264,7 @@ Zig 静态链接 musl，无 runtime、无 GC，启动接近 C 程序。
 
 Zig 0.17 的标准库与旧版本差异很大（`std.io` → `std.Io`、`std.http.Client` 需注入 `io`、
 `main` 签名改为接收 `std.process.Init`）。本仓库代码按 0.17 编写，**不要**参照网上基于 0.11–0.14 的示例。
+
+## License
+
+[MIT](LICENSE) © 2026 otaku-say

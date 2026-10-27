@@ -7,6 +7,7 @@
 const std = @import("std");
 const ctxmod = @import("ctx.zig");
 const util = @import("util.zig");
+const jsonfmt = @import("jsonfmt.zig");
 
 const Ctx = ctxmod.Ctx;
 const BUF = 2 << 20;
@@ -46,7 +47,7 @@ pub fn run(c: *Ctx, argv: []const []const u8) !void {
         }
     }
     const body = try std.fmt.allocPrint(c.arena, "{{\"timeout\":{d}}}", .{timeout_s});
-    const path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/connect", .{sid});
+    const path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/connect", .{try jsonfmt.qenc(c.arena, sid, false)});
     const buf = try c.arena.alloc(u8, BUF);
     const res = try c.control(.POST, path, body, buf);
 

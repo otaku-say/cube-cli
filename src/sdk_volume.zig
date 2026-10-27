@@ -4,6 +4,7 @@
 const std = @import("std");
 const sdkmod = @import("sdk.zig");
 const envd = @import("envd.zig");
+const jsonfmt = @import("jsonfmt.zig");
 
 const Sdk = sdkmod.Sdk;
 
@@ -38,7 +39,7 @@ pub fn volumeCreate(self: *Sdk, name: ?[]const u8, driver: ?[]const u8) ![]const
 
 /// 查询持久卷详情（GET /volumes/<id>）。返回响应体 JSON。
 pub fn volumeInfo(self: *Sdk, vid: []const u8) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/volumes/{s}", .{vid});
+    const path = try std.fmt.allocPrint(self.arena, "/volumes/{s}", .{try jsonfmt.qenc(self.arena, vid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const res = try self.control(.GET, path, null, buf);
     return self.arena.dupe(u8, res.body);
@@ -46,7 +47,7 @@ pub fn volumeInfo(self: *Sdk, vid: []const u8) ![]const u8 {
 
 /// 删除持久卷（DELETE /volumes/<id>）。
 pub fn volumeDelete(self: *Sdk, vid: []const u8) !void {
-    const path = try std.fmt.allocPrint(self.arena, "/volumes/{s}", .{vid});
+    const path = try std.fmt.allocPrint(self.arena, "/volumes/{s}", .{try jsonfmt.qenc(self.arena, vid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     _ = try self.control(.DELETE, path, null, buf);
 }

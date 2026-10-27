@@ -11,7 +11,7 @@ const Sdk = sdkmod.Sdk;
 
 /// 创建快照（POST /sandboxes/<id>/snapshots）。
 pub fn snapshotCreate(self: *Sdk, sid: []const u8, name: ?[]const u8) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/snapshots", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/snapshots", .{try jsonfmt.qenc(self.arena, sid, false)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const body = if (name) |n|
         try std.fmt.allocPrint(self.arena, "{{\"name\":\"{s}\"}}", .{try envd.jsonEscape(self.arena, n)})
@@ -72,7 +72,7 @@ pub fn snapshotList(self: *Sdk, q: SnapListQuery) ![]const u8 {
 
 /// 回滚沙箱到指定快照（POST /sandboxes/<id>/rollback）。
 pub fn snapshotRollback(self: *Sdk, sid: []const u8, snapshot_id: []const u8, wait: bool, timeout_s: u64) ![]const u8 {
-    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/rollback", .{sid});
+    const path = try std.fmt.allocPrint(self.arena, "/sandboxes/{s}/rollback", .{try jsonfmt.qenc(self.arena, sid, false)});
     const body = try std.fmt.allocPrint(self.arena, "{{\"snapshotID\":\"{s}\"}}", .{try envd.jsonEscape(self.arena, snapshot_id)});
     const buf = try self.arena.alloc(u8, sdkmod.BUF);
     const res = try self.control(.POST, path, body, buf);

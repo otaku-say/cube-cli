@@ -79,7 +79,7 @@ pub fn run(c: *Ctx, argv: []const []const u8) !void {
     const direction = a.get("direction") orelse (if (a.has("cursor")) "backward" else "forward");
 
     if (!use_v2) {
-        var path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/logs", .{sid});
+        var path = try std.fmt.allocPrint(c.arena, "/sandboxes/{s}/logs", .{try jsonfmt.qenc(c.arena, sid, false)});
         var w = std.Io.Writer.fixed(try c.arena.alloc(u8, 512));
         var n: usize = 0;
         if (a.get("start")) |s| {
@@ -144,7 +144,7 @@ pub fn run(c: *Ctx, argv: []const []const u8) !void {
         }
         if (w.buffered().len > 0) try w.writeAll("&");
         try w.print("direction={s}", .{direction});
-        const path = try std.fmt.allocPrint(c.arena, "/v2/sandboxes/{s}/logs?{s}", .{ sid, w.buffered() });
+        const path = try std.fmt.allocPrint(c.arena, "/v2/sandboxes/{s}/logs?{s}", .{ try jsonfmt.qenc(c.arena, sid, false), w.buffered() });
         const res = try c.control(.GET, path, null, buf);
         if (as_json) try c.out.print("{s}\n", .{res.body});
 
