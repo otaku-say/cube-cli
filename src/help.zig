@@ -949,7 +949,7 @@ pub fn printVersion(out: *std.Io.Writer) !void {
         \\文档: {s}
         \\构建: Zig 0.17.0 · musl 静态单文件 · ReleaseFast + strip
         \\构建命令: zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux-musl
-        \\产物名: aarch64-linux-musl → cube-cli-linux-arm64 ；x86_64-linux-musl → cube-cli-linux-amd64
+        \\产物名: arm64 → cube-cli-linux-arm64 ；amd64 → cube-cli-linux-amd64
         \\
     , .{ tool, cfg.version, repo, docs });
 }
