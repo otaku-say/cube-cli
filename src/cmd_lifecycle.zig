@@ -42,14 +42,18 @@ fn cmdPause(c: *Ctx, a: util.Args) !void {
         try s.printErr(c.out, e);
         return e;
     };
-    if (a.has("wait")) {
-        var limit_s: u64 = 30;
-        if (a.get("timeout")) |t| {
-            limit_s = std.fmt.parseInt(u64, t, 10) catch {
-                try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=60\n", .{t});
-                return error.BadArg;
-            };
+    // --timeout 只在 --wait 下生效：但给了就必须是整数，不能因为没加 --wait 就静默忽略。
+    var limit_s: u64 = 30;
+    if (a.get("timeout")) |t| {
+        limit_s = std.fmt.parseInt(u64, t, 10) catch {
+            try c.out.print("错误：--timeout= 需要整数秒（收到 {s}）；请用等号写法 --timeout=60\n", .{t});
+            return error.BadArg;
+        };
+        if (!a.has("wait")) {
+            try c.out.print("提示：--timeout 只在 --wait 时生效，本次未等待\n", .{});
         }
+    }
+    if (a.has("wait")) {
         try waitState(c, sid, "paused", limit_s);
     } else {
         try c.out.print("paused {s}\n", .{sid});

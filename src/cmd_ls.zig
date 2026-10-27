@@ -54,6 +54,12 @@ pub fn run(c: *Ctx, argv: []const []const u8) !void {
     if (!use_v2 and a.get("limit") != null) {
         std.debug.print("[ls] 提示：v1 的 limit 由服务端固定为 200，--limit={s} 未生效\n", .{a.get("limit").?});
     }
+    if (a.get("limit")) |l| {
+        _ = std.fmt.parseInt(u32, l, 10) catch {
+            try c.out.print("错误：--limit= 需要整数（收到 {s}）\n", .{l});
+            return error.BadArg;
+        };
+    }
 
     var s = sdkmod.Sdk.fromCtx(c);
     const body = sdk_lifecycle.sandboxList(&s, .{
