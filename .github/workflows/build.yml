@@ -167,10 +167,10 @@ jobs:
             echo "===== $name ====="
             if "$@" 2>&1 | tee "ci-logs/$name.txt"; then echo "[PASS] $name"; else echo "[FAIL] $name"; rc=1; fi
           }
-          run_suite protocol tests/mcp_protocol_test.py --bin "$bin" --tools-min 37
-          run_suite tools tests/mcp_cube_tools_test.py --bin "$bin"
-          run_suite bigoutput tests/mcp_big_output_test.py --bin "$bin"
-          run_suite edge tests/mcp_cube_edge_test.py --bin "$bin"
+          run_suite protocol python tests/mcp_protocol_test.py --bin "$bin" --tools-min 37
+          run_suite tools python tests/mcp_cube_tools_test.py --bin "$bin"
+          run_suite bigoutput python tests/mcp_big_output_test.py --bin "$bin"
+          run_suite edge python tests/mcp_cube_edge_test.py --bin "$bin"
           exit $rc
 
       - name: 上传测试日志（失败也要）
