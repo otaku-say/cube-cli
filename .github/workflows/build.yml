@@ -112,6 +112,9 @@ jobs:
   # 被执行过。
   func:
     runs-on: ${{ matrix.runner }}
+    # Windows runner 的 Python stdout 默认是 cp1252，打中文测试名会 UnicodeEncodeError。
+    env:
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
