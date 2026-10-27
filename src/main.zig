@@ -270,7 +270,7 @@ fn runInSandbox(c: *Ctx, sid: []const u8, command: []const u8, cwd: ?[]const u8,
         if (res.truncated) std.debug.print("⚠ 响应超上限已截断：输出不完整\n", .{});
         if (res.deadline_exceeded) std.debug.print("⚠ --timeout 到点命令未结束（deadline_exceeded），按 exit 124 返回\n", .{});
         if (res.exit_code != 0) std.debug.print("（exit {d}）\n", .{res.exit_code});
-        std.process.exit(if (res.exit_code != 0) @intCast(@min(@max(res.exit_code, 0), 255)) else 1);
+        std.process.exit(if (res.exit_code > 0) @intCast(@min(res.exit_code, 255)) else 1);
     }
 }
 
@@ -342,7 +342,7 @@ fn cmdExec(c: *Ctx, args: []const []const u8) !void {
         if (res.truncated) std.debug.print("⚠ 响应超上限已截断：输出不完整\n", .{});
         if (res.deadline_exceeded) std.debug.print("⚠ --timeout 到点命令未结束（deadline_exceeded），按 exit 124 返回\n", .{});
         if (res.exit_code != 0) std.debug.print("（exit {d}）\n", .{res.exit_code});
-        std.process.exit(if (res.exit_code != 0) @intCast(@min(@max(res.exit_code, 0), 255)) else 1);
+        std.process.exit(if (res.exit_code > 0) @intCast(@min(res.exit_code, 255)) else 1);
     }
 }
 

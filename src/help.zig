@@ -756,6 +756,8 @@ pub const table = [_]Entry{
         \\示例:  cube-cli raw GET /health
         \\       cube-cli raw POST /sandboxes --body='{"templateID":"tpl-..."}'
         \\注意:  非 2xx 打印状态码与响应体，并以非 0 退出。
+        \\       退出码与上游 exit_code 一致：成功 0、失败 1-255 原样传递、
+        \\       硬超时 124（同 timeout(1)）、exit_code<0（被信号杀死）按 1。
         ,
     },
 

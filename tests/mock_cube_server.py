@@ -10,6 +10,9 @@ import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# 测试可改写：envd exec 返回的退出码（默认 0）。tests/exit_code_test.py 用它逐档验证退出码语义。
+exec_exit_code = 0
 from urllib.parse import parse_qs, urlparse
 
 
@@ -289,7 +292,7 @@ class MockHandler(BaseHTTPRequestHandler):
                 events = [
                     {"pid": 1234},
                     {"stdout": b64},
-                    {"exitCode": 0},
+                    {"exitCode": exec_exit_code},
                 ]
                 self._send_bytes(200, connect_stream(events), "application/connect+json")
                 return
@@ -298,7 +301,7 @@ class MockHandler(BaseHTTPRequestHandler):
             events = [
                 {"pid": 1234},
                 {"stdout": out_b64},
-                {"exitCode": 0},
+                {"exitCode": exec_exit_code},
             ]
             self._send_bytes(200, connect_stream(events), "application/connect+json")
             return
